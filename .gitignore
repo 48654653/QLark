@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# NapCat 运行时依赖（约 300MB，不纳入源码管理）
+runtime/
+
+# 本地数据 / 日志 / 临时文件
+*.log
+*.bak
+/tmp/
+/data/

@@ -1,0 +1,19 @@
+# 换行符统一为 LF。
+#
+# Git for Windows 的系统级配置里 core.autocrlf=true，不锁定的话工作区文件
+# 会被悄悄换成 CRLF —— 那样每次 diff 都会出现整文件"改动"，实际什么都没改。
+# 本项目里 Python / JS / Markdown 用 LF 都没有问题。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换（不然 Git 会试图"修复"它们，可能损坏内容）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.exe  binary
+*.dll  binary
+*.node binary
+*.db   binary
+*.sqlite binary

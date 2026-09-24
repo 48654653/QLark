@@ -1,0 +1,4 @@
+# QLark 运行依赖（开发期也可直接 pip install -r requirements.txt）
+pywebview>=5.0
+requests>=2.31
+psutil>=5.9

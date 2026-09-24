@@ -1,0 +1,32 @@
+[project]
+name = "qlark"
+version = "1.0.0"
+description = "QLark（云雀）—— 基于 NapCat 的 QQ 聊天机器人 Windows 桌面客户端"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pywebview>=5.0",
+    "requests>=2.31",
+    "psutil>=5.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+qlark = ["web/*", "storage/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"

@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>QLark 云雀</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ===== 内联 SVG 图标库（无外链） ===== -->
+<svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <symbol id="i-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="7.5" height="8.5" rx="2"></rect>
+    <rect x="13.5" y="3" width="7.5" height="5.5" rx="2"></rect>
+    <rect x="3" y="14.5" width="7.5" height="6.5" rx="2"></rect>
+    <rect x="13.5" y="11.5" width="7.5" height="9.5" rx="2"></rect>
+  </symbol>
+  <symbol id="i-model" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="7" y="7" width="10" height="10" rx="2.5"></rect>
+    <path d="M10.5 3v4M13.5 3v4M10.5 17v4M13.5 17v4M3 10.5h4M3 13.5h4M17 10.5h4M17 13.5h4"></path>
+  </symbol>
+  <symbol id="i-persona" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="8.5" r="3.8"></circle>
+    <path d="M4.8 20.2c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6"></path>
+  </symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="12" cy="5.8" rx="7.4" ry="3"></ellipse>
+    <path d="M4.6 5.8v6.2c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3V5.8"></path>
+    <path d="M4.6 12v6.2c0 1.7 3.3 3 7.4 3s7.4-1.3 7.4-3V12"></path>
+  </symbol>
+  <symbol id="i-logs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.8" y="4" width="18.4" height="16" rx="2.6"></rect>
+    <path d="M7 9.5l2.8 2.6L7 14.7M12.6 15.4h4.4"></path>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="4.2"></circle>
+    <path d="M12 2.4v2.4M12 19.2v2.4M2.4 12h2.4M19.2 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7"></path>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.5 14.3A8.6 8.6 0 0 1 9.7 3.5a8.6 8.6 0 1 0 10.8 10.8z"></path>
+  </symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="8.4" r="3.6"></circle>
+    <path d="M5.2 20c.8-3.4 3.5-5.3 6.8-5.3s6 1.9 6.8 5.3"></path>
+  </symbol>
+  <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"></path>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7.5 5.2l10.6 6.8-10.6 6.8z"></path>
+  </symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="6.5" y="6.5" width="11" height="11" rx="2.4"></rect>
+  </symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.5 4.5H6.8A1.8 1.8 0 0 0 5 6.3v11.4a1.8 1.8 0 0 0 1.8 1.8h7.7"></path>
+    <path d="M15.6 8.4L19.2 12l-3.6 3.6M10.4 12h8.6"></path>
+  </symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.6 8.4h11.2l-3-3M19.4 15.6H8.2l3 3"></path>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19.6 11.2a7.6 7.6 0 1 0-2.3 5.5"></path>
+    <path d="M19.9 5.6v5.6h-5.6"></path>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="10.8" cy="10.8" r="6.2"></circle>
+    <path d="M15.4 15.4l4.2 4.2"></path>
+  </symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 4v10.2M8 10.4l4 3.8 4-3.8M5 19.2h14"></path>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.8 6.8h14.4M9.4 6.8V4.9h5.2v1.9M6.6 6.8l.9 12a1.7 1.7 0 0 0 1.7 1.6h5.6a1.7 1.7 0 0 0 1.7-1.6l.9-12"></path>
+  </symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.4 7.2a1.8 1.8 0 0 1 1.8-1.8h3.5l2 2.4h7.1a1.8 1.8 0 0 1 1.8 1.8v7.6a1.8 1.8 0 0 1-1.8 1.8H5.2a1.8 1.8 0 0 1-1.8-1.8z"></path>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.2l7 2.6v5.4c0 4.2-2.8 7.5-7 9.6-4.2-2.1-7-5.4-7-9.6V5.8z"></path>
+    <path d="M9.1 12.1l2 2.1 4-4.2"></path>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5.4 12.6l4.3 4.3 8.9-9.6"></path>
+  </symbol>
+  <symbol id="i-cross" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6.6 6.6l10.8 10.8M17.4 6.6L6.6 17.4"></path>
+  </symbol>
+  <symbol id="i-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5.2v13.6M6.4 13.2l5.6 5.6 5.6-5.6"></path>
+  </symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.8l8.4 15.4H3.6z"></path>
+    <path d="M12 9.6v4.2M12 16.6h.01"></path>
+  </symbol>
+</svg>
+
+<div class="app">
+  <!-- ===== 左侧边栏 ===== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">雀</div>
+      <div class="brand-text">
+        <div class="brand-name">QLark</div>
+        <div class="brand-sub">云雀 · QQ 机器人</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="主导航">
+      <button class="nav-item active" data-page="dashboard" type="button">
+        <svg class="icon"><use href="#i-dashboard" xlink:href="#i-dashboard"></use></svg><span>仪表盘</span>
+      </button>
+      <button class="nav-item" data-page="model" type="button">
+        <svg class="icon"><use href="#i-model" xlink:href="#i-model"></use></svg><span>模型配置</span>
+      </button>
+      <button class="nav-item" data-page="persona" type="button">
+        <svg class="icon"><use href="#i-persona" xlink:href="#i-persona"></use></svg><span>人设配置</span>
+      </button>
+      <button class="nav-item" data-page="memory" type="button">
+        <svg class="icon"><use href="#i-memory" xlink:href="#i-memory"></use></svg><span>记忆面板</span>
+      </button>
+      <button class="nav-item" data-page="logs" type="button">
+        <svg class="icon"><use href="#i-logs" xlink:href="#i-logs"></use></svg><span>日志</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="side-status">
+        <span class="dot off" id="sideDot"></span>
+        <span id="sideStatusText">未登录</span>
+        <span class="side-paused" id="sidePaused" hidden>· 已暂停</span>
+      </div>
+      <div class="side-version">QLark · QQ 聊天机器人</div>
+    </div>
+  </aside>
+
+  <!-- ===== 内容区 ===== -->
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h1 class="page-title" id="pageTitle">仪表盘</h1>
+        <p class="page-sub" id="pageSub">运行概览与今日统计</p>
+      </div>
+      <div class="topbar-right">
+        <span class="badge-preview" id="previewBadge" hidden title="未检测到 pywebview，正在使用内置模拟数据">预览模式</span>
+        <button class="icon-btn" id="themeBtn" type="button" title="切换深色 / 浅色主题" aria-label="切换主题">
+          <svg class="icon"><use id="themeIconUse" href="#i-moon" xlink:href="#i-moon"></use></svg>
+        </button>
+        <button class="status-btn" id="loginBtn" type="button" title="登录 / 连接管理">
+          <span class="dot off" id="loginDot"></span>
+          <span id="loginText">未登录</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+
+      <!-- ---------- 仪表盘 ---------- -->
+      <section class="page active" id="page-dashboard" data-page="dashboard">
+        <div class="stat-grid">
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">今日 Token 消耗量</span><span class="stat-ic token">T</span></div>
+            <div class="stat-value" id="stToken">0</div>
+            <div class="stat-hint" id="stTokenHint">输入 0 · 输出 0</div>
+          </article>
+
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">今日调用次数</span><span class="stat-ic call">#</span></div>
+            <div class="stat-value" id="stCalls">0</div>
+            <div class="stat-hint" id="stCallHint">失败 0 次</div>
+          </article>
+
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">连接状态</span></div>
+            <div class="stat-value with-dot"><span class="dot off lg" id="stOnlineDot"></span><span id="stOnline">离线</span></div>
+            <div class="stat-hint" id="stOnlineHint">NapCat 未就绪</div>
+          </article>
+
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">当前登录 QQ 号</span></div>
+            <div class="stat-value" id="stQQ">未登录</div>
+            <div class="stat-hint" id="stNick">昵称 —</div>
+          </article>
+
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">今日消息收发</span></div>
+            <div class="stat-value" id="stMsg">0 / 0</div>
+            <div class="stat-hint">收 / 发</div>
+          </article>
+
+          <article class="card stat">
+            <div class="stat-head"><span class="stat-label">活跃会话数</span></div>
+            <div class="stat-value" id="stSessions">0</div>
+            <div class="stat-hint">群 / 好友</div>
+          </article>
+        </div>
+
+        <section class="card panel">
+          <div class="panel-head">
+            <h2 class="panel-title">运行信息</h2>
+            <span class="tag" id="rtPhaseTag">未启动</span>
+            <span class="tag warn" id="rtPauseTag" hidden>已暂停</span>
+          </div>
+          <div class="runtime-grid">
+            <div class="rt-item">
+              <span class="rt-label">NapCat 进程状态</span>
+              <span class="rt-value" id="rtProc">未运行</span>
+            </div>
+            <div class="rt-item">
+              <span class="rt-label">进程 PID</span>
+              <span class="rt-value mono" id="rtPid">—</span>
+            </div>
+            <div class="rt-item">
+              <span class="rt-label">运行时长</span>
+              <span class="rt-value" id="rtUptime">—</span>
+            </div>
+            <div class="rt-item">
+              <span class="rt-label">OneBot 端口就绪</span>
+              <span class="rt-value" id="rtOnebot">未就绪</span>
+            </div>
+            <div class="rt-item">
+              <span class="rt-label">当前阶段</span>
+              <span class="rt-value" id="rtPhase">未启动（idle）</span>
+            </div>
+            <div class="rt-item">
+              <span class="rt-label">环境自检</span>
+              <span class="rt-value" id="rtEnv">未执行</span>
+            </div>
+            <div class="rt-item wide">
+              <span class="rt-label">消息处理</span>
+              <span class="rt-value dim" id="rtMsg">未就绪</span>
+              <span class="rt-value err rt-err-line" id="rtMsgErr" hidden></span>
+            </div>
+            <div class="rt-item wide">
+              <span class="rt-label">事件服务</span>
+              <span class="rt-value dim" id="rtEvent">未就绪</span>
+            </div>
+          </div>
+          <div class="panel-foot">
+            <button class="btn ghost sm" id="btnPause" type="button">暂停回复</button>
+            <button class="btn ghost sm" id="qaEnv" type="button">
+              <svg class="icon sm"><use href="#i-shield" xlink:href="#i-shield"></use></svg>环境自检
+            </button>
+            <button class="btn ghost sm" id="qaRestart" type="button">
+              <svg class="icon sm"><use href="#i-refresh" xlink:href="#i-refresh"></use></svg>重启 NapCat
+            </button>
+            <button class="btn ghost sm" id="qaDataDir" type="button">
+              <svg class="icon sm"><use href="#i-folder" xlink:href="#i-folder"></use></svg>数据目录
+            </button>
+            <button class="btn ghost sm" id="qaRuntimeDir" type="button">
+              <svg class="icon sm"><use href="#i-folder" xlink:href="#i-folder"></use></svg>运行时目录
+            </button>
+          </div>
+        </section>
+      </section>
+
+      <!-- ---------- 模型配置 ---------- -->
+      <section class="page" id="page-model" data-page="model">
+
+        <!-- 分区 1：模型 API -->
+        <section class="card panel">
+          <div class="panel-head">
+            <h2 class="panel-title">模型 API</h2>
+            <span class="tag" id="mKeyTag">加载中…</span>
+            <span class="spacer"></span>
+            <span class="head-hint">仅支持 OpenAI 兼容格式（<span class="mono">/chat/completions</span>）</span>
+          </div>
+
+          <div class="form-grid">
+            <label class="field span2">
+              <span class="field-label">Base URL</span>
+              <input class="input" id="mBaseUrl" type="text" placeholder="https://api.deepseek.com" spellcheck="false" autocomplete="off">
+              <span class="field-hint">不带 <span class="mono">/v1/chat/completions</span> 后缀，QLark 会自动拼接</span>
+              <span class="field-err" id="eBaseUrl" hidden></span>
+            </label>
+
+            <label class="field span2">
+              <span class="field-label">API Key</span>
+              <span class="input-row">
+                <input class="input" id="mApiKey" type="password" placeholder="sk-…" spellcheck="false" autocomplete="new-password">
+                <button class="btn ghost sm" id="mApiKeyClear" type="button" title="清空已保存的 API Key">清除</button>
+              </span>
+              <span class="field-hint" id="mApiKeyHint">尚未读取配置</span>
+              <span class="field-err" id="eApiKey" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">对话模型</span>
+              <input class="input" id="mModel" type="text" placeholder="deepseek-chat" spellcheck="false" autocomplete="off">
+              <span class="field-hint">直接填服务商给出的模型名，不做下拉限制</span>
+              <span class="field-err" id="eModel" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">视觉模型（选填）</span>
+              <input class="input" id="mVision" type="text" placeholder="deepseek-vl2" spellcheck="false" autocomplete="off">
+              <span class="field-hint">留空则图片消息只发送 <span class="mono">[图片]</span> 占位</span>
+              <span class="field-err" id="eVision" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">总结模型（选填）</span>
+              <input class="input" id="mSummary" type="text" placeholder="同对话模型" spellcheck="false" autocomplete="off">
+              <span class="field-hint">留空则用对话模型</span>
+              <span class="field-err" id="eSummary" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">最大输出 Token</span>
+              <input class="input" id="mMaxTokens" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="4096">
+              <span class="field-hint">范围 1 – 32000</span>
+              <span class="field-err" id="eMaxTokens" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">温度</span>
+              <input class="input" id="mTemperature" type="number" min="0" max="2" step="0.1" inputmode="decimal" placeholder="1">
+              <span class="field-hint">范围 0 – 2，越大越发散</span>
+              <span class="field-err" id="eTemperature" hidden></span>
+            </label>
+          </div>
+
+          <div class="panel-foot">
+            <button class="btn primary" id="btnModelApply" type="button">应用</button>
+            <button class="btn ghost" id="btnModelTest" type="button">测试连接</button>
+            <span class="test-result" id="modelTestResult" hidden></span>
+            <span class="spacer"></span>
+            <span class="foot-hint">测试只发一条 <span class="mono">max_tokens=1</span> 的最小请求，不花多余 Token</span>
+          </div>
+        </section>
+
+        <!-- 分区 2：NapCat 连接 -->
+        <section class="card panel">
+          <div class="panel-head">
+            <h2 class="panel-title">NapCat 连接</h2>
+            <span class="tag warn" id="napcatRestartTag" hidden>需重启 NapCat</span>
+            <span class="spacer"></span>
+            <span class="head-hint">OneBot 动作端口与 QLark 事件端口不要重复</span>
+          </div>
+
+          <div class="alert warn restart-bar">
+            <svg class="icon sm"><use href="#i-warn" xlink:href="#i-warn"></use></svg>
+            <span>以下设置改动后需要重启 NapCat 才能生效</span>
+            <span class="spacer"></span>
+            <button class="btn warn sm" id="btnNapcatRestart" type="button">立即重启</button>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">本机监听地址</span>
+              <input class="input" id="nOnebotHost" type="text" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
+              <span class="field-hint">NapCat OneBot 服务的绑定地址</span>
+              <span class="field-err" id="eOnebotHost" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">OneBot 动作端口</span>
+              <input class="input" id="nOnebotPort" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="3000">
+              <span class="field-hint">QLark 调用 NapCat 的 HTTP / WS 端口</span>
+              <span class="field-err" id="eOnebotPort" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">QLark 事件端口</span>
+              <input class="input" id="nEventPort" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="3001">
+              <span class="field-hint">NapCat 反向推送事件到 QLark 的端口</span>
+              <span class="field-err" id="eEventPort" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">事件监听地址</span>
+              <input class="input" id="nEventHost" type="text" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
+              <span class="field-hint">QLark 事件服务绑定地址</span>
+              <span class="field-err" id="eEventHost" hidden></span>
+            </label>
+
+            <label class="field span2">
+              <span class="field-label">访问 Token</span>
+              <input class="input" id="nToken" type="password" placeholder="（未设置）" spellcheck="false" autocomplete="new-password">
+              <span class="field-hint" id="nTokenHint">留空表示不修改已保存的 Token</span>
+              <span class="field-err" id="eToken" hidden></span>
+            </label>
+          </div>
+
+          <div class="panel-foot">
+            <button class="btn primary" id="btnNapcatApply" type="button">应用并提示重启</button>
+            <span class="spacer"></span>
+            <span class="foot-hint">改动写入 NapCat 配置，重启后才会生效</span>
+          </div>
+        </section>
+
+        <!-- 分区 3：登录账号 -->
+        <section class="card panel">
+          <div class="panel-head">
+            <h2 class="panel-title">登录账号</h2>
+            <span class="tag" id="acctCurrentTag">读取中…</span>
+            <span class="spacer"></span>
+            <button class="btn ghost sm" id="btnAccountsRefresh" type="button">
+              <svg class="icon sm"><use href="#i-refresh" xlink:href="#i-refresh"></use></svg>刷新
+            </button>
+          </div>
+          <p class="head-hint acct-hint" id="acctHint">本机 NapCat 登录过的 QQ 会记录在这里，可免扫码切换</p>
+          <ul class="acct-list" id="acctList">
+            <li class="acct-empty">正在读取账号列表…</li>
+          </ul>
+        </section>
+
+        <!-- 分区 4：对话行为 -->
+        <section class="card panel">
+          <div class="panel-head">
+            <h2 class="panel-title">对话行为</h2>
+            <span class="tag">随「应用」一起提交</span>
+            <span class="spacer"></span>
+            <span class="head-hint">即时生效，不需要重启 NapCat</span>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">记忆轮数</span>
+              <input class="input" id="bMemoryRounds" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="20">
+              <span class="field-hint">每次请求携带的最近对话轮数，默认 20</span>
+              <span class="field-err" id="eMemoryRounds" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">单条回复最大字数</span>
+              <input class="input" id="bMaxReplyChars" type="number" min="20" max="5000" step="10" inputmode="numeric" placeholder="500">
+              <span class="field-hint">超出部分截断，避免刷屏</span>
+              <span class="field-err" id="eMaxReplyChars" hidden></span>
+            </label>
+
+            <div class="field">
+              <span class="field-label">群聊引用原消息</span>
+              <label class="switch">
+                <input type="checkbox" id="bQuoteGroup">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">回复时引用被回复的消息</span>
+              </label>
+              <span class="field-hint">仅影响群聊，私聊不受影响</span>
+            </div>
+
+            <div class="field">
+              <span class="field-label">私聊出错时告知原因</span>
+              <label class="switch">
+                <input type="checkbox" id="bErrorNotice">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">调用失败时回复错误原因</span>
+              </label>
+              <span class="field-hint">关闭后只写日志，不向对方回复</span>
+            </div>
+          </div>
+
+          <div class="panel-foot">
+            <button class="btn primary" id="btnBehaviorApply" type="button">应用</button>
+            <span class="spacer"></span>
+            <span class="foot-hint">与模型 API 使用同一个保存接口，一起提交</span>
+          </div>
+        </section>
+      </section>
+
+      <!-- ---------- 人设配置 ---------- -->
+      <section class="page" id="page-persona" data-page="persona">
+        <div class="alert info persona-tip">
+          <svg class="icon sm"><use href="#i-persona" xlink:href="#i-persona"></use></svg>
+          <span>每个人设的记忆是独立的；每个群 / 每个人各自记住自己当前用的人设。</span>
+        </div>
+
+        <div class="persona-layout">
+          <!-- 左：列表 -->
+          <aside class="card persona-list-panel">
+            <div class="panel-head">
+              <h2 class="panel-title">人设列表</h2>
+              <span class="tag" id="personaCountTag">—</span>
+              <span class="spacer"></span>
+              <button class="btn primary sm" id="btnPersonaNew" type="button">＋ 新建人设</button>
+            </div>
+            <ul class="persona-list" id="personaList">
+              <li class="persona-empty-row">正在读取人设…</li>
+            </ul>
+          </aside>
+
+          <!-- 右：编辑器 -->
+          <section class="card persona-edit-panel">
+            <div class="panel-head">
+              <h2 class="panel-title" id="personaEditTitle">人设编辑</h2>
+              <span class="tag" id="personaSlotTag" hidden>—</span>
+              <span class="spacer"></span>
+              <span class="field-hint" id="personaMsgCount"></span>
+              <button class="btn danger sm" id="btnPersonaDelete" type="button">删除</button>
+            </div>
+
+            <div class="persona-placeholder" id="personaEmpty">请从左侧选择一个人设</div>
+
+            <div id="personaEditor" hidden>
+              <div class="form-grid">
+                <label class="field span2">
+                  <span class="field-label">名称</span>
+                  <input class="input" id="pName" type="text" maxlength="40" placeholder="例如：米蛋" spellcheck="false" autocomplete="off">
+                  <span class="field-err" id="ePName" hidden></span>
+                </label>
+
+                <label class="field span2">
+                  <span class="field-label">系统提示词<span class="field-count" id="pPromptCount">0 字</span></span>
+                  <textarea class="textarea mono" id="pPrompt" rows="10" spellcheck="false" placeholder="你是……（描述性格、称呼、说话风格与边界）"></textarea>
+                  <span class="field-err" id="ePrompt" hidden></span>
+                </label>
+
+                <div class="field">
+                  <span class="field-label">启用</span>
+                  <label class="switch">
+                    <input type="checkbox" id="pEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">参与 /person 切换</span>
+                  </label>
+                  <span class="field-hint">关闭后不能再被切换到该人设</span>
+                </div>
+
+                <label class="field">
+                  <span class="field-label">模型覆盖（选填）</span>
+                  <input class="input" id="pModelOverride" type="text" placeholder="留空 = 用全局对话模型" spellcheck="false" autocomplete="off">
+                  <span class="field-err" id="ePModelOverride" hidden></span>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">温度覆盖（选填）</span>
+                  <input class="input" id="pTempOverride" type="number" min="0" max="2" step="0.1" inputmode="decimal" placeholder="留空 = 用全局温度">
+                  <span class="field-err" id="ePTempOverride" hidden></span>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">最大 Token 覆盖（选填）</span>
+                  <input class="input" id="pTokensOverride" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="留空 = 用全局上限">
+                  <span class="field-err" id="ePTokensOverride" hidden></span>
+                </label>
+              </div>
+
+              <div class="panel-foot">
+                <button class="btn primary" id="btnPersonaSave" type="button">保存</button>
+                <button class="btn danger" id="btnPersonaResetMemory" type="button">清空该人设记忆</button>
+                <span class="spacer"></span>
+                <span class="foot-hint" id="personaEditHint"></span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- 底部：切换权限 -->
+        <section class="card panel" id="personaPermPanel">
+          <div class="panel-head">
+            <h2 class="panel-title">切换权限</h2>
+            <span class="tag" id="permStateTag">—</span>
+            <span class="spacer"></span>
+            <span class="head-hint">白名单只影响群聊里的 /person 切换</span>
+          </div>
+
+          <div class="perm-row">
+            <label class="switch">
+              <input type="checkbox" id="permWhitelistOnly">
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+              <span class="switch-text">仅白名单 QQ 可用 /person 切换人设</span>
+            </label>
+          </div>
+
+          <div class="perm-add">
+            <input class="input" id="permQqInput" type="text" inputmode="numeric" maxlength="12" placeholder="输入 QQ 号" spellcheck="false" autocomplete="off">
+            <button class="btn primary sm" id="btnPermAdd" type="button">添加</button>
+            <span class="field-err" id="permErr" hidden></span>
+          </div>
+
+          <div class="chips" id="permChips"></div>
+
+          <p class="field-hint perm-hint">关闭开关后，任何人都可以在群里 @机器人 /person N 切换人设；私聊始终允许本人自由切换。</p>
+        </section>
+      </section>
+
+      <!-- ---------- 记忆面板 ---------- -->
+      <section class="page" id="page-memory" data-page="memory">
+        <section class="card placeholder">
+          <div class="ph-icon"><svg class="icon lg"><use href="#i-memory" xlink:href="#i-memory"></use></svg></div>
+          <h2 class="ph-title">记忆面板</h2>
+          <p class="ph-badge">将在 M4 阶段实现</p>
+          <p class="ph-desc">设置记忆轮数 W（默认 20）与自动总结开关，按会话分组浏览 / 编辑 / 删除原文与当前摘要，并显示会话数、已压缩次数与占用体积。</p>
+        </section>
+      </section>
+
+      <!-- ---------- 日志 ---------- -->
+      <section class="page" id="page-logs" data-page="logs">
+        <div class="log-toolbar">
+          <div class="seg" id="levelFilter" role="group" aria-label="日志级别筛选">
+            <button class="seg-item active" data-level="all" type="button">全部</button>
+            <button class="seg-item" data-level="debug" type="button">debug</button>
+            <button class="seg-item" data-level="info" type="button">info</button>
+            <button class="seg-item" data-level="warn" type="button">warn</button>
+            <button class="seg-item" data-level="error" type="button">error</button>
+          </div>
+          <label class="search-box">
+            <svg class="icon sm"><use href="#i-search" xlink:href="#i-search"></use></svg>
+            <input id="logSearch" type="search" placeholder="搜索关键字…" autocomplete="off" spellcheck="false">
+          </label>
+          <label class="switch" title="关闭后新日志不会自动滚动到底部">
+            <input type="checkbox" id="autoScroll" checked>
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-text">自动滚动</span>
+          </label>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="btnClearLogs" type="button">
+            <svg class="icon sm"><use href="#i-trash" xlink:href="#i-trash"></use></svg>清空
+          </button>
+          <button class="btn ghost sm" id="btnExportLogs" type="button">
+            <svg class="icon sm"><use href="#i-download" xlink:href="#i-download"></use></svg>导出
+          </button>
+        </div>
+
+        <div class="log-wrap">
+          <div class="log-view" id="logView" tabindex="0" aria-label="日志输出"></div>
+          <button class="jump-btn" id="logJump" type="button" hidden>
+            有新日志 <svg class="icon sm"><use href="#i-arrow-down" xlink:href="#i-arrow-down"></use></svg>
+          </button>
+        </div>
+
+        <div class="log-foot">
+          <span id="logCount">0 条</span>
+          <span class="sep">·</span>
+          <span id="logFilterInfo">全部级别</span>
+          <span class="spacer"></span>
+          <span id="logLive">等待日志…</span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ===== 登录 / 连接模态 ===== -->
+<div class="modal-backdrop" id="loginModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head">
+      <h2 class="modal-title" id="modalTitle">
+        <svg class="icon"><use href="#i-user" xlink:href="#i-user"></use></svg>登录 / 连接
+      </h2>
+      <button class="icon-btn sm" id="modalClose" type="button" title="关闭" aria-label="关闭">
+        <svg class="icon sm"><use href="#i-close" xlink:href="#i-close"></use></svg>
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <div class="login-status">
+        <span class="dot off lg" id="modalDot"></span>
+        <div class="login-status-text">
+          <div class="login-phase" id="modalPhase">未启动</div>
+          <div class="login-meta" id="modalMeta">QQ：未登录 · 阶段 idle</div>
+        </div>
+      </div>
+
+      <div class="qr-area">
+        <div class="qr-frame">
+          <div class="qr-box" id="qrBox">
+            <img id="qrImg" alt="QQ 登录二维码" hidden>
+            <div class="qr-empty" id="qrEmpty">
+              <svg class="icon lg"><use href="#i-user" xlink:href="#i-user"></use></svg>
+              <span>暂无二维码</span>
+              <small>点击「启动 / 重试」开始登录流程</small>
+            </div>
+          </div>
+          <div class="qr-caption" id="qrCaption">二维码保持白底黑块，未做任何滤镜处理</div>
+        </div>
+        <div class="qr-side">
+          <ol class="qr-steps">
+            <li>手机 QQ → 右上角「+」→ 扫一扫</li>
+            <li>扫描左侧二维码并在手机端确认登录</li>
+            <li>二维码约 121 秒自动刷新，过期请重新扫描</li>
+          </ol>
+          <div class="kv" id="qrKv"></div>
+        </div>
+      </div>
+
+      <div class="alert err" id="errBox" hidden>
+        <svg class="icon sm"><use href="#i-warn" xlink:href="#i-warn"></use></svg>
+        <span id="errText"></span>
+      </div>
+
+      <section class="mini-panel">
+        <div class="mini-head">
+          <h3>环境自检</h3>
+          <span class="tag" id="envSummary">未执行</span>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="btnEnvRecheck" type="button">
+            <svg class="icon sm"><use href="#i-refresh" xlink:href="#i-refresh"></use></svg>重新自检
+          </button>
+        </div>
+        <ul class="env-list" id="envList">
+          <li class="env-empty">尚未执行环境自检</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn primary" id="btnStart" type="button">
+        <svg class="icon sm"><use href="#i-play" xlink:href="#i-play"></use></svg>启动 / 重试
+      </button>
+      <button class="btn" id="btnStop" type="button">
+        <svg class="icon sm"><use href="#i-stop" xlink:href="#i-stop"></use></svg>停止
+      </button>
+      <button class="btn" id="btnRelogin" type="button">
+        <svg class="icon sm"><use href="#i-swap" xlink:href="#i-swap"></use></svg>切换账号
+      </button>
+      <button class="btn danger" id="btnLogout" type="button">
+        <svg class="icon sm"><use href="#i-logout" xlink:href="#i-logout"></use></svg>退出登录
+      </button>
+      <span class="spacer"></span>
+      <button class="btn ghost" id="btnClose" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
