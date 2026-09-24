@@ -42,6 +42,15 @@ class OneBotClient:
         self.token = token
         self.timeout = timeout
         self._session = requests.Session()
+        # 本机 OneBot 调用**绝对不能走系统代理**。
+        #
+        # Windows 上 WinINET 的 ProxyOverride 白名单（通常含 127.*）在 Python 这边是
+        # **不生效的** —— urllib 读注册表时只取 ProxyServer/ProxyEnable，忽略白名单。
+        # 实测（2026-09-25）：本机配了 127.0.0.1:7890，于是连 http://127.0.0.1:3000
+        # 的请求也被丢给代理，探针偶发超时 → 扫码登录后认不出账号；更糟的是
+        # send_msg 也走代理，表现成"偶发发不出消息"。
+        # 模型请求走代理是**对的**（要翻墙访问远端 API），只有本机调用必须绕开。
+        self._session.trust_env = False
 
     # ------------------------------------------------------------------ 调用
     def call(self, action: str, params: dict[str, Any] | None = None, *, timeout: float | None = None) -> dict[str, Any]:

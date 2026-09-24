@@ -25,6 +25,11 @@ RE_ONEBOT_START = re.compile(r"\[HTTP Server Adapter\]\s*Start On\s+([\d.]+):(\d
 #: NapCat 版本
 RE_NAPCAT_VERSION = re.compile(r"Version:\s*([\w.\-]+)")
 
+#: **登录后加载本账号配置** —— 这行里带着 QQ 号，是扫码模式下最可靠的身份来源之一：
+#: ``[Core] [Config] 配置文件E:\...\config\napcat_2157649443.json加载 {...}``
+#: 实测每次登录都会打印（03:54:51 / 03:55:50 / 03:56:32 三次都有）。
+RE_ACCOUNT_CONFIG = re.compile(r"napcat_(\d{5,12})\.json")
+
 #: 快速登录候选列表（**内容会浮动，不可作为登录依据**，仅用于日志提示）
 RE_QUICK_CANDIDATES = re.compile(r"可用于快速登录 of QQ")
 

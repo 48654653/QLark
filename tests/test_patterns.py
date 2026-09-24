@@ -41,6 +41,23 @@ def test_module_not_found_line() -> None:
     assert patterns.RE_MODULE_NOT_FOUND.search(line)
 
 
+def test_account_config_line() -> None:
+    """登录后 NapCat 打印的配置加载行里带着 QQ 号 —— 扫码模式靠它认账号。"""
+    line = (
+        "03:56:32 [debug] [Core] [Config] 配置文件"
+        "E:\\QLark\\runtime\\napcat\\napcat\\config\\napcat_2157649443.json加载 "
+        '{"fileLog":false}'
+    )
+    match = patterns.RE_ACCOUNT_CONFIG.search(line)
+    assert match is not None
+    assert match.group(1) == "2157649443"
+
+
+def test_account_config_line_does_not_match_other_files() -> None:
+    assert patterns.RE_ACCOUNT_CONFIG.search("配置文件 napcat.json 加载") is None
+    assert patterns.RE_ACCOUNT_CONFIG.search("配置文件 onebot11_2157649443.json 加载") is None
+
+
 def test_parse_level() -> None:
     assert patterns.parse_level("[info] 普通输出") == "info"
     assert patterns.parse_level("[warn] 警告") == "warn"

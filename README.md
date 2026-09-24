@@ -168,6 +168,28 @@ python run.py --debug         # 打开 WebView2 开发者工具
 
 登录成功一次后账号会被持久化，**之后每次启动都是免扫码快速登录**。
 
+### 扫码登录后提示"无法确认登录的是哪个 QQ"
+
+QLark 判断"登录的是哪个号"有三条独立路径，正常情况任意一条成功即可：
+
+1. **NapCat 输出**：登录后它会打印 `[Core] [Config] 配置文件…napcat_<QQ>.json加载`，这行里带着 QQ 号；
+2. **文件基线**：`napcat_<QQ>.json` / `napcat_protocol_<QQ>.json` 出现新写入；
+3. **OneBot 探针**：直接问端口上的 `get_login_info`。
+
+三条全失败才会报这个错。已知会导致失败的原因：
+
+- **系统代理劫持了本机请求**。Windows 的"代理绕过列表"里通常写了 `127.*`，但
+  **Python 读注册表时不解析这个白名单**——于是连 `http://127.0.0.1:3000` 都被丢给代理，
+  探针超时。QLark 已对本机 OneBot 调用强制 `trust_env = False`（模型请求仍走代理）。
+  如果你在别处也遇到"本机接口偶发超时"，可以用这条命令自查：
+  ```powershell
+  python -c "import requests; print(requests.utils.getproxies())"
+  ```
+- **NapCat 版本输出格式变了**（升级过 NapCat）。这时三条路径的日志解析都失效，
+  请把「日志」页的 NapCat 输出发给开发者。
+
+> 这个提示本身不会中断程序：点「重新启动」再扫一次即可，日志页有完整的 NapCat 输出。
+
 ---
 
 ## 开发

@@ -31,7 +31,7 @@ from ..core.models import EnvReport, Phase, QrSnapshot
 from ..onebot.client import OneBotClient, OneBotError
 from ..settings import Settings
 from . import netconfig, patterns
-from .envcheck import EnvChecker
+from .envcheck import EnvChecker, port_is_free
 from .launch import build_launch_spec
 from .logbus import LogBus
 from .process import NapCatProcess, kill_orphans
@@ -55,7 +55,11 @@ ACCOUNT_FILE_GRACE = 8.0
 LOGIN_SETTLE_SECONDS = 5.0
 #: 扫码模式下向 OneBot 探测"当前登录的是谁"的间隔与超时
 ACCOUNT_PROBE_INTERVAL = 2.0
-ACCOUNT_PROBE_TIMEOUT = 1.5
+#: 探针超时。这是**本机**调用（不走代理后耗时约 1ms），2 秒已经很宽松
+ACCOUNT_PROBE_TIMEOUT = 2.0
+#: NapCat 输出行的缓冲上限。
+#: 登录流程结束后没人再消费这个队列，必须设上限，否则会一直堆。
+LINE_QUEUE_MAX = 2000
 
 
 class LoginError(RuntimeError):
@@ -101,7 +105,7 @@ class LoginManager:
 
         self._proc: NapCatProcess | None = None
         self._qr = QrCodeWatcher(paths.napcat_qrcode_path())
-        self._line_queue: queue.Queue[str] = queue.Queue()
+        self._line_queue: queue.Queue[str] = queue.Queue(maxsize=LINE_QUEUE_MAX)
         self._stop_event = threading.Event()
         self._busy = threading.Lock()
         self._state_lock = threading.RLock()
@@ -114,7 +118,15 @@ class LoginManager:
         self._scan_mode = False
         self._onebot_line_port: int | None = None
         self._account_baseline: dict[str, float] = {}
+        #: 从 NapCat 输出里读到的"本次登录的账号"
+        self._logged_in_account: str | None = None
         self._last_probe: float = 0.0
+        self._last_probe_log: float = 0.0
+        #: 每 spawn 一次 +1；用来作废上一个进程的残留输出
+        self._generation: int = 0
+        #: 异步账号探测的结果与在跑的线程（不能同步探测，会堵住二维码轮询）
+        self._probe_result: str | None = None
+        self._probe_thread: threading.Thread | None = None
         self._qq: str | None = None
         self._nickname: str | None = None
         self._online = False
@@ -289,7 +301,16 @@ class LoginManager:
         self._logged_in_signal = False
         self._scan_mode = False
         self._onebot_line_port = None
+        self._logged_in_account = None
+        self._last_probe = 0.0
+        self._probe_result = None
+        self._probe_thread = None
         self._auto_restarts = 0
+
+        # 丢掉上一次流程遗留的输出行，避免用旧日志判断本次登录
+        stale = self._drain_line_queue()
+        if stale:
+            self.logbus.add(f"已丢弃 {stale} 条上一次遗留的 NapCat 输出", level="debug")
 
         self._set_phase(Phase.ENV_CHECK)
         self._clean_orphans()
@@ -323,15 +344,24 @@ class LoginManager:
         # 记录启动前的账号文件基线：只有"本次新写/被改写"的文件才算登录成功
         self._account_baseline = netconfig.account_file_mtimes()
         spec = build_launch_spec(qq)
+
+        # 代次：旧进程的读取线程在我们清空队列**之后**还会再塞几条进来，
+        # 而其中可能就有那行带着 QQ 号的"配置文件 napcat_<QQ>.json 加载"。
+        # 只靠"spawn 前清空队列"堵不住这个缝 —— 实测会让重新扫码被瞬间跳过。
+        # 带上代次就能从根上把上一个进程的输出全部作废。
+        self._generation += 1
+        generation = self._generation
+
         proc = NapCatProcess(
             spec,
             self.logbus,
-            on_line=self._on_line,
+            on_line=lambda line: self._on_line(line, generation),
             on_exit=self._on_exit,
         )
         pid = proc.start()
         self._proc = proc
         self._qr.arm(proc.started_at)
+        self._drain_line_queue()  # 清掉 spawn 间隙里涌进来的旧行
         self.logbus.add(f"NapCat 已启动，PID={pid}", level="info")
         self._on_change()
 
@@ -344,8 +374,36 @@ class LoginManager:
         self._qr.reset()
         self._online = False
 
-    def _on_line(self, line: str) -> None:
-        self._line_queue.put(line)
+    def _on_line(self, line: str, generation: int | None = None) -> None:
+        if generation is not None and generation != self._generation:
+            # 上一个 NapCat 进程的残留输出：绝不能拿来判断本次登录
+            return
+        try:
+            self._line_queue.put_nowait(line)
+        except queue.Full:
+            # 已经 READY 之后没人消费这个队列；不能无限堆积，也不能让新行丢失，
+            # 所以丢一条最旧的、把位置腾给最新的。
+            try:
+                self._line_queue.get_nowait()
+                self._line_queue.put_nowait(line)
+            except (queue.Empty, queue.Full):
+                pass
+
+    def _drain_line_queue(self) -> int:
+        """丢掉上一次流程遗留的输出行。
+
+        必须做：登录流程结束后没人再消费队列，上一次登录的行（包括那行带着 QQ 号的
+        "配置文件 napcat_<QQ>.json 加载"）会留在里面。下一次扫码登录时会**先吃到旧行**，
+        于是"立刻认出账号"、二维码还没被看到就被跳过。
+        """
+        dropped = 0
+        while True:
+            try:
+                self._line_queue.get_nowait()
+                dropped += 1
+            except queue.Empty:
+                break
+        return dropped
 
     def _on_exit(self, code: int | None) -> None:
         """进程退出回调（读线程里触发）。"""
@@ -359,6 +417,14 @@ class LoginManager:
     def _handle_line(self, line: str) -> None:
         if patterns.RE_WORKER_LOGGED_IN.search(line):
             self._logged_in_signal = True
+            return
+        # 登录后 NapCat 会打印"配置文件 napcat_<QQ>.json 加载"——这行里就带着账号
+        account = patterns.RE_ACCOUNT_CONFIG.search(line)
+        if account:
+            detected = account.group(1)
+            if detected != self._logged_in_account:
+                self._logged_in_account = detected
+                self.logbus.add(f"从 NapCat 输出识别到账号：{detected}", level="debug")
             return
         if patterns.RE_NO_QUICK_LOGIN.search(line):
             if not self._scan_mode:
@@ -421,7 +487,11 @@ class LoginManager:
                 elif before is None or before.mtime != snapshot.mtime:
                     self._on_change()
 
-            # 3) 账号落盘信号（与启动前的基线比对，排除上次登录的残留文件）
+            # 3) 先从 NapCat 输出里找账号（不依赖文件变化，也不依赖端口）
+            if not expected_qq and self._logged_in_account:
+                return self._logged_in_account
+
+            # 4) 账号落盘信号（与启动前的基线比对，排除上次登录的残留文件）
             accounts = netconfig.detect_accounts(baseline=self._account_baseline)
             if accounts:
                 if expected_qq and expected_qq in accounts:
@@ -429,15 +499,28 @@ class LoginManager:
                 if not expected_qq:
                     return accounts[0]
 
-            # 4) 直接问接口（扫码模式下最可靠：账号首次注册之后文件就不再变化了）
-            if not expected_qq and time.monotonic() - self._last_probe > ACCOUNT_PROBE_INTERVAL:
+            # 5) 直接问接口（扫码模式下最可靠：账号首次注册之后文件就不再变化了）
+            #
+            # **必须异步探测**：这是个网络调用，可能阻塞到超时（实测 1.5 秒）。
+            # 同步做的话会把上面那个二维码轮询一起堵住 —— 而二维码恰好就在这段
+            # 时间里写好，结果就是"重新扫码"被瞬间跳过、二维码一直不显示。
+            if not expected_qq and self._probe_result:
+                self.logbus.add(
+                    f"从 OneBot 接口探测到已登录账号：{self._probe_result}", level="debug"
+                )
+                return self._probe_result
+            if (
+                not expected_qq
+                and self._probe_thread is None
+                and time.monotonic() - self._last_probe > ACCOUNT_PROBE_INTERVAL
+            ):
                 self._last_probe = time.monotonic()
-                probed = self._probe_account()
-                if probed:
-                    self.logbus.add(f"从 OneBot 接口探测到已登录账号：{probed}", level="debug")
-                    return probed
+                self._probe_thread = threading.Thread(
+                    target=self._probe_worker, args=(self._generation,), daemon=True
+                )
+                self._probe_thread.start()
 
-            # 5) 快速登录：日志信号足够（账号已知）
+            # 6) 快速登录：日志信号足够（账号已知）
             if expected_qq and self._logged_in_signal:
                 return expected_qq
 
@@ -455,6 +538,8 @@ class LoginManager:
         self.settings.qq_account = qq
         self._set_phase(Phase.LOGGED_IN)
         self.logbus.add(f"登录成功：{qq}", level="info")
+
+        self._resolve_event_port()
 
         already_configured = netconfig.is_configured_for(
             qq,
@@ -550,6 +635,51 @@ class LoginManager:
             timeout=timeout or 10.0,
         )
 
+    def _probe_worker(self, generation: int) -> None:
+        """在后台线程里探测账号，避免阻塞登录主循环。
+
+        带上代次：探测很慢时这条线程可能活到下一次登录流程，绝不能把上一轮的
+        结果（可能是**另一个账号**）算到本轮头上。
+        """
+        try:
+            result = self._probe_account()
+        except Exception:  # pragma: no cover - _probe_account 自己已经兜住了
+            result = None
+        if generation != self._generation:
+            return
+        self._probe_thread = None
+        if result:
+            self._probe_result = result
+
+    def _resolve_event_port(self) -> int:
+        """写配置前确认事件端口可用，被占用就换一个空闲的。
+
+        NapCat 侧的事件通道指向 QLark 的 ``event_port``。如果那个端口被别的进程占着，
+        事件服务就起不来，机器人会变成「**仪表盘在线、但永远收不到消息**」——
+        所以宁可在写配置前换端口，也不要往配置里写一个用不了的目标。
+        """
+        host = self.settings.event_host
+        port = self.settings.event_port
+        if port_is_free(host, port):
+            return port
+
+        for candidate in range(port + 1, port + 21):
+            if port_is_free(host, candidate):
+                self.settings.event_port = candidate
+                self.logbus.add(
+                    f"事件端口 {port} 被占用，已改用 {candidate}"
+                    "（NapCat 的事件推送会指向新端口）",
+                    level="warn",
+                )
+                return candidate
+
+        self.logbus.add(
+            f"事件端口 {port} 起连续 20 个端口都被占用，事件通道可能起不来；"
+            "请在「模型配置 → NapCat 连接」里换一个空闲端口",
+            level="error",
+        )
+        return port
+
     def _probe_account(self) -> str | None:
         """直接问 OneBot "现在登录的是哪个账号"。
 
@@ -561,8 +691,12 @@ class LoginManager:
         """
         try:
             info = self._client(timeout=ACCOUNT_PROBE_TIMEOUT).get_login_info()
-        except Exception:
-            return None  # 端口没起来 / 未登录，都当作"还探测不到"
+        except Exception as exc:
+            # 不能静默：探针失败时我们完全不知道是端口没起来、鉴权失败还是别的
+            if time.monotonic() - self._last_probe_log > 10.0:
+                self._last_probe_log = time.monotonic()
+                self.logbus.add(f"账号探测失败（{type(exc).__name__}）：{exc}", level="debug")
+            return None
         data = info.get("data") or {}
         uid = data.get("user_id")
         return str(uid) if uid else None

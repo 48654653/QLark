@@ -309,6 +309,45 @@ def test_pipeline_snapshot_shape(ready) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 代理：本机调用必须绕开，远端调用才走
+# --------------------------------------------------------------------------- #
+def test_local_onebot_calls_bypass_system_proxy(ready, monkeypatch) -> None:
+    """对本机 NapCat 的调用**绝不能**走系统代理。
+
+    实测（2026-09-25）：本机配了系统代理 127.0.0.1:7890，ProxyOverride 里虽然写了
+    ``127.*``，但 **Python 读注册表时不解析这个白名单** —— 于是
+    ``http://127.0.0.1:3000`` 的请求也被丢给代理，表现为探针偶发超时（扫码登录后
+    认不出账号）以及偶发发不出消息。
+
+    这里故意把代理指到一个死端口：客户端若没用 trust_env=False，这个请求必然失败。
+    """
+    from qlark.onebot.client import OneBotClient
+
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1")
+    monkeypatch.setenv("NO_PROXY", "")
+    monkeypatch.setenv("no_proxy", "")
+
+    client = OneBotClient(f"http://127.0.0.1:{ready.home.port}", ready.home.token)
+    try:
+        info = client.get_login_info()
+    finally:
+        client.close()
+    assert str((info.get("data") or {}).get("user_id")) == ready.home.qq
+
+
+def test_llm_client_keeps_using_system_proxy() -> None:
+    """模型请求是**远端**的，必须保留系统代理（很多人靠它访问 API）。"""
+    from qlark.llm.client import OpenAIChatClient
+
+    client = OpenAIChatClient("https://api.deepseek.com", "k", "m")
+    try:
+        assert client._session.trust_env is True
+    finally:
+        client.close()
+
+
+# --------------------------------------------------------------------------- #
 # 事件服务的反复启停（账号切换 / 重启 NapCat 都会走这条路）
 # --------------------------------------------------------------------------- #
 def test_event_server_rebinds_after_repeated_restarts(env) -> None:

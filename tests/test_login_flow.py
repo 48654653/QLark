@@ -240,6 +240,62 @@ def test_stale_qrcode_is_not_shown(env) -> None:
     assert snapshot.mtime > stale_mtime + 60, "显示的必须是本次新生成的二维码"
 
 
+def test_scan_login_detected_from_napcat_output(env, monkeypatch) -> None:
+    """回归：账号**只能**从 NapCat 输出里认出来时也必须成功。
+
+    实测现场（2026-09-25 03:56）：扫码登录后
+      * ``napcat_<QQ>.json`` 没变化（它只在账号首次注册时写）
+      * ``napcat_protocol_<QQ>.json`` 那次也没变化
+      * OneBot 端口虽然起来了，但探针没返回结果
+    结果就是「登录信号已收到，但无法确认登录的是哪个 QQ」。
+
+    而 NapCat 在登录后一定会打印
+    ``[Core] [Config] 配置文件...\\napcat_<QQ>.json加载`` —— 这行里就带着账号。
+    """
+    monkeypatch.setenv("FAKE_NAPCAT_ACCOUNT_SIGNAL", "never")
+    monkeypatch.setenv("FAKE_NAPCAT_PROTOCOL_SIGNAL", "never")
+    assert env.settings.qq_account is None
+
+    env.manager.start()
+    assert env.manager.wait_until(lambda: env.manager.phase is Phase.READY, timeout=120), (
+        f"未进入 READY，阶段={env.manager.phase} 错误={env.manager.last_error}"
+    )
+    assert env.settings.qq_account == env.home.qq
+    assert any(
+        "从 NapCat 输出识别到账号" in line.text for line in env.logbus.tail(4000)
+    ), "没有走日志识别这条路径"
+
+
+def test_event_port_is_switched_when_occupied(env, monkeypatch) -> None:
+    """事件端口被占用时要自动换一个，而不是写一个用不了的目标进配置。
+
+    否则会出现「仪表盘显示在线，但机器人永远收不到消息」这种最难查的状态。
+    """
+    import socket
+
+    monkeypatch.setenv("FAKE_NAPCAT_HAVE_CRED", "1")
+    env.settings.qq_account = env.home.qq
+
+    blocker = socket.socket()
+    blocker.bind(("127.0.0.1", env.home.event_port))
+    blocker.listen(1)
+    try:
+        env.manager.start()
+        assert env.manager.wait_until(lambda: env.manager.phase is Phase.READY, timeout=120), (
+            f"未进入 READY，阶段={env.manager.phase} 错误={env.manager.last_error}"
+        )
+
+        assert env.settings.event_port != env.home.event_port, "被占用却没有换端口"
+
+        cfg = _load_onebot(env.home)
+        client = cfg["network"]["httpClients"][0]
+        assert client["url"].endswith(f":{env.settings.event_port}"), (
+            f"配置里的推送地址没有跟着换：{client['url']}"
+        )
+    finally:
+        blocker.close()
+
+
 # --------------------------------------------------------------------------- #
 # 停止与清理
 # --------------------------------------------------------------------------- #
@@ -266,7 +322,8 @@ def test_relogin_clears_saved_account(env, monkeypatch) -> None:
 
     env.manager.relogin()
     assert env.manager.wait_until(lambda: env.manager.qrcode is not None, timeout=60), (
-        "重新登录应当强制走扫码"
+        "重新登录应当强制走扫码；"
+        f"phase={env.manager.phase} starts={env.starts()} err={env.manager.last_error}"
     )
     env.manager.stop(wait=True)
 

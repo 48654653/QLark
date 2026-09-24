@@ -194,15 +194,26 @@ def fake_openai(tmp_path: Path):
         handle.close()
 
 
+def _local_opener():
+    """访问本机服务的 urllib opener：**强制绕开系统代理**。
+
+    Windows 的 ProxyOverride 白名单（含 127.*）在 Python 里不生效，不显式禁用的话
+    测试会走用户的代理，既慢又依赖代理是否在跑（实测踩过）。
+    """
+    import urllib.request
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _wait_http(url: str, timeout: float = 20.0) -> None:
     import time as _time
     import urllib.error
-    import urllib.request
 
+    opener = _local_opener()
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=1) as response:
+            with opener.open(url, timeout=1) as response:
                 if response.status == 200:
                     return
         except (urllib.error.URLError, OSError):
@@ -212,9 +223,8 @@ def _wait_http(url: str, timeout: float = 20.0) -> None:
 
 def _get(url: str) -> dict:
     import json as _json
-    import urllib.request
 
-    with urllib.request.urlopen(url, timeout=10) as response:
+    with _local_opener().open(url, timeout=10) as response:
         return _json.loads(response.read().decode("utf-8"))
 
 
@@ -225,7 +235,7 @@ def _post(url: str, payload: dict | None = None) -> dict:
     body = _json.dumps(payload or {}).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with _local_opener().open(request, timeout=10) as response:
         raw = response.read().decode("utf-8")
     return _json.loads(raw) if raw else {}
 

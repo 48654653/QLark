@@ -238,8 +238,11 @@ def push_event(payload: dict) -> bool:
     request.add_header("Content-Type", "application/json")
     if token:
         request.add_header("Authorization", f"Bearer {token}")
+    # 绕开系统代理：Windows 的 ProxyOverride 白名单在 Python 里不生效，
+    # 不显式禁用的话连 127.0.0.1 的请求都会被丢给代理
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with opener.open(request, timeout=5) as response:
             ok = 200 <= response.status < 300
         STATE.record_push(payload, None if ok else f"HTTP {response.status}")
         return ok
@@ -433,6 +436,13 @@ def mark_logged_in(qq: str) -> None:
         account_path.write_text(
             json.dumps({"fake": True, "qq": qq}, ensure_ascii=False), encoding="utf-8"
         )
+
+    # 真实 NapCat 每次登录都会打印这行 —— 里面带着 QQ 号，
+    # 是 QLark 在扫码模式下识别"登录的是哪个号"最省事的来源
+    emit(
+        f"[info] [Core] [Config] 配置文件{account_path}加载 "
+        '{"fileLog":false,"consoleLog":true,"fileLogLevel":"debug"}'
+    )
 
     # 而 napcat_protocol_<QQ>.json 每次登录都会重新生成
     if PROTOCOL_SIGNAL == "always":
