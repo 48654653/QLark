@@ -26,8 +26,22 @@ from ..version import DEFAULT_EVENT_PORT, DEFAULT_ONEBOT_PORT, DEFAULT_ONEBOT_TO
 
 log = logging.getLogger(__name__)
 
-#: 我们在 ``httpServers`` 里的条目名，用于幂等识别
+#: 我们在 ``httpServers`` 里的条目名，用于幂等识别。
 SERVER_NAME = "qlark"
+
+#: 事件通道（``httpClients``）的条目名。
+#:
+#: **必须和服务端不同名** —— 这是踩过的坑：NapCat 的 NetworkManager 是
+#: ``registerAdapter(e) { this.adapters.set(e.name, e) }``，**按 name 存进 Map**。
+#: 两条通道同名时，后注册的 httpClient 会**直接覆盖掉 httpServer**，
+#: 于是 ``openAllAdapters()`` 只打开了 client —— **3000 端口再也不会被监听**。
+#: 更坑的是 NapCat 照样会打印 ``HTTP服务: 127.0.0.1:3000, : 已启动``：
+#: 那行日志只是 ``creatOneBotLog()`` 遍历配置拼出来的字符串，不代表真的启动了。
+#: 实测（2026-09-25）：同名 → 3000 缺失；改成这个名字 → 3000 立刻 LISTENING。
+CLIENT_NAME = "qlark-events"
+
+#: 历史遗留的错误名字（和服务端同名）。识别到就说明这份配置需要修复。
+LEGACY_CONFLICT_NAME = SERVER_NAME
 
 #: 网络段为空的初始形态
 EMPTY_NETWORK: dict[str, Any] = {
@@ -278,9 +292,11 @@ def build_client_entry(host: str, port: int, token: str) -> dict[str, Any]:
     """事件通道：NapCat 主动把消息事件 POST 到 QLark。
 
     **没有这一条就收不到任何消息** —— HTTP 服务端模式是单工的，只能我们主动调它。
+
+    名字必须与 :data:`SERVER_NAME` 不同，否则会把服务端适配器覆盖掉（见 CLIENT_NAME）。
     """
     return {
-        "name": SERVER_NAME,
+        "name": CLIENT_NAME,
         "enable": True,
         "url": f"http://{host}:{int(port)}",
         "messagePostFormat": "array",
@@ -338,6 +354,31 @@ def _merge_entries(
             network[key] = list(default)
 
     reasons: list[str] = []
+
+    # 0) 先清理"跨通道同名"的条目。
+    #
+    # NapCat 的 NetworkManager 是 ``this.adapters.set(e.name, e)`` —— **按 name 存 Map**。
+    # 两条通道同名时，后注册的 httpClient 会直接覆盖掉 httpServer，
+    # 于是动作端口根本不会监听（而且 NapCat 还会照常打印"已启动"）。
+    # 历史版本把 httpClient 也叫 "qlark"，必须在这里清掉，否则永远修不好。
+    wanted_names = {
+        item.get("name") for entries in wanted.values() for item in entries if item.get("name")
+    }
+    for key in list(network):
+        bucket = network.get(key)
+        if not isinstance(bucket, list):
+            continue
+        own = {item.get("name") for item in wanted.get(key, [])}
+        kept = []
+        for existing in bucket:
+            name = existing.get("name") if isinstance(existing, dict) else None
+            # 只清理我们自己的命名空间，用户自己加的条目不动
+            if name and name in wanted_names and name not in own:
+                reasons.append(f"移除与其它通道同名的 {key} 条目 {name}（同名会让 NapCat 互相覆盖）")
+                continue
+            kept.append(existing)
+        bucket[:] = kept
+
     for key, entries in wanted.items():
         bucket = network[key]
         for item in entries:
@@ -364,20 +405,24 @@ def qlark_entries_ok(
 
     注意：M1 时代只写 ``httpServers``，那种旧配置在这里会被判为"未配好"，
     于是自动补上 ``httpClients`` 并重启一次 —— 这正是升级时想要的行为。
+
+    另外也会把"事件通道和服务端同名"的坏配置判为未配好：那种配置下 NapCat 的
+    适配器 Map 会把 httpServer 覆盖掉，**动作端口根本不会监听**（见 CLIENT_NAME）。
     """
     network = cfg.get("network")
     if not isinstance(network, dict):
         return False
 
-    def enabled(key: str) -> list[dict[str, Any]]:
+    def enabled(key: str, name: str) -> list[dict[str, Any]]:
         return [
             entry
             for entry in (network.get(key) or [])
-            if isinstance(entry, dict) and entry.get("enable") and entry.get("name") == SERVER_NAME
+            if isinstance(entry, dict) and entry.get("enable") and entry.get("name") == name
         ]
 
-    servers = enabled("httpServers")
-    clients = enabled("httpClients")
+    servers = enabled("httpServers", SERVER_NAME)
+    # 同名的事件通道必须判为"没配好"，否则永远不会被修好
+    clients = enabled("httpClients", CLIENT_NAME)
     if not servers or not clients:
         return False
     if entry_port(servers[0]) != int(action_port):

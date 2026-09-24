@@ -620,6 +620,10 @@ NapCat 实现了约 **106 个** API，几乎全部可用：
 | 11 | 新装的 NapCat 调接口全部连不上 | **协议端默认不开任何端口** | 手动配置网络（步骤 7） |
 | 12 | 服务端模式暴露公网后账号异常 | 未配 token | **必须配 token**；`host` 优先填 `127.0.0.1` |
 | 13 | v4.8.106 以下 WebUI 被爆破 | 默认弱密码 `napcat` | 升级到 v4.8.106+（改用启动随机 Token），或立即改密码/关闭 WebUI |
+| 15 | **同时配了 `httpServers` 和 `httpClients` 后，动作端口（3000）再也不监听**；但 NapCat 照常打印 `HTTP服务: 127.0.0.1:3000, : 已启动` | **两条通道用了同一个 `name`**。NapCat 的 `NetworkManager.registerAdapter` 是 `this.adapters.set(e.name, e)` —— **按 name 存进 Map**，后注册的 httpClient 会**覆盖掉 httpServer**，于是 `openAllAdapters()` 只打开了 client。那行"已启动"是 `creatOneBotLog()` 遍历配置拼出来的字符串，**跟端口有没有真的监听无关** | **给两条通道起不同的 `name`**（例如 `qlark` / `qlark-events`）。实测（NapCat 4.18.28）：同名 → 3000 缺失；改名 → 3000 立刻 LISTENING |
+
+> 坑 15 排查过程记录：`napcat.mjs` 里 `registerAdapter(e){this.adapters.set(e.name,e)}` 是关键证据；
+> 假 NapCat 无法复现这类问题——**只有真机跑一遍才能发现**。
 
 ### 7.3 数据与资源限制（设计时必须考虑）
 

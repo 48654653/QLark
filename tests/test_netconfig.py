@@ -241,3 +241,111 @@ def test_atomic_write_retries_on_sharing_violation(tmp_path, monkeypatch) -> Non
     assert calls["n"] == 3, "前两次失败后应当重试成功"
     assert json.loads(path.read_text(encoding="utf-8")) == {"ok": True}
     assert not path.with_suffix(path.suffix + ".tmp").exists()
+
+
+# --------------------------------------------------------------------------- #
+# 两条通道**绝不能同名**
+#
+# NapCat 的 NetworkManager 是 this.adapters.set(e.name, e) —— 按 name 存 Map。
+# 同名时后注册的 httpClient 会覆盖掉 httpServer，动作端口根本不会监听；
+# 而 NapCat 仍然会打印「HTTP服务: ... 已启动」（那只是遍历配置拼的字符串）。
+#
+# 实测（2026-09-25，真机 NapCat 4.18.28）：
+#   server=qlark  client=qlark         -> 3000 缺失
+#   server=qlark  client=qlark-events  -> 3000 LISTENING
+# --------------------------------------------------------------------------- #
+def test_two_channels_never_share_a_name() -> None:
+    server = netconfig.build_server_entry("127.0.0.1", 3000, "t")
+    client = netconfig.build_client_entry("127.0.0.1", 3001, "t")
+    assert server["name"] != client["name"], (
+        "两条通道同名会让 NapCat 按 name 互相覆盖，动作端口不会监听"
+    )
+
+
+def test_same_name_config_is_treated_as_unconfigured() -> None:
+    """历史坏配置（事件通道也叫 qlark）必须判为"没配好"，否则永远修不回来。"""
+    cfg = {
+        "network": {
+            "httpServers": [netconfig.build_server_entry("127.0.0.1", 3000, "t")],
+            "httpClients": [
+                {
+                    "name": netconfig.SERVER_NAME,  # 就是那个会覆盖服务端的旧名字
+                    "enable": True,
+                    "url": "http://127.0.0.1:3001",
+                    "token": "t",
+                }
+            ],
+        }
+    }
+    assert netconfig.qlark_entries_ok(cfg, action_port=3000, event_port=3001) is False
+
+
+def test_legacy_conflicting_client_is_removed(tmp_path: Path) -> None:
+    """修复时要把同名的事件通道删掉，而不是留着继续覆盖服务端。"""
+    config_dir = tmp_path / "napcat" / "config"
+    config_dir.mkdir(parents=True)
+    path = config_dir / "onebot11_2157649443.json"
+
+    legacy = {
+        "network": {
+            "httpServers": [netconfig.build_server_entry("127.0.0.1", 3000, "t")],
+            "httpClients": [
+                {
+                    "name": netconfig.SERVER_NAME,
+                    "enable": True,
+                    "url": "http://127.0.0.1:3001",
+                    "token": "t",
+                }
+            ],
+            "websocketServers": [],
+            "websocketClients": [],
+            "httpSseServers": [],
+            "plugins": [],
+        }
+    }
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    result = netconfig.ensure_network_config(
+        "2157649443", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
+    )
+    assert result.changed is True
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in saved["network"]["httpClients"]]
+    assert names == [netconfig.CLIENT_NAME], f"旧同名条目没被清掉：{names}"
+
+    # 而且修完之后必须被判为"已配好"，否则每次启动都会重复重启 NapCat
+    assert netconfig.qlark_entries_ok(saved, action_port=3000, event_port=3001) is True
+
+
+def test_unrelated_user_entries_are_left_alone(tmp_path: Path) -> None:
+    """清理同名条目时不能误删用户自己配的无关通道。"""
+    config_dir = tmp_path / "napcat" / "config"
+    config_dir.mkdir(parents=True)
+    path = config_dir / "onebot11_2157649443.json"
+    path.write_text(
+        json.dumps(
+            {
+                "network": {
+                    "httpServers": [],
+                    "httpClients": [
+                        {"name": "我的监控", "enable": True, "url": "http://127.0.0.1:9999"}
+                    ],
+                    "websocketServers": [],
+                    "websocketClients": [],
+                    "httpSseServers": [],
+                    "plugins": [],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    netconfig.ensure_network_config(
+        "2157649443", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
+    )
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in saved["network"]["httpClients"]]
+    assert "我的监控" in names, "用户自己配的通道被误删了"
+    assert netconfig.CLIENT_NAME in names
