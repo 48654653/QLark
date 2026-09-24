@@ -102,6 +102,34 @@ class JsApi:
     def remove_persona_whitelist(self, qq: str) -> dict[str, Any]:
         return self._app.remove_persona_whitelist(qq)
 
+    # ------------------------------------------------------------------ 记忆
+    def get_memory_config(self) -> dict[str, Any]:
+        return self._app.get_memory_config()
+
+    def apply_memory_config(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._app.apply_memory_config(payload or {})
+
+    def list_memories(self) -> dict[str, Any]:
+        return self._app.list_memories()
+
+    def get_memory(self, key: str) -> dict[str, Any]:
+        return self._app.get_memory(key)
+
+    def update_memory_message(self, message_id: int, content: str) -> dict[str, Any]:
+        return self._app.update_memory_message(int(message_id), content)
+
+    def delete_memory_message(self, message_id: int) -> dict[str, Any]:
+        return self._app.delete_memory_message(int(message_id))
+
+    def delete_memory_summary(self, key: str) -> dict[str, Any]:
+        return self._app.delete_memory_summary(key)
+
+    def clear_memory(self, key: str) -> dict[str, Any]:
+        return self._app.clear_memory(key)
+
+    def summarize_memory_now(self, key: str) -> dict[str, Any]:
+        return self._app.summarize_memory_now(key)
+
     # ------------------------------------------------------------------ 日志
     def get_logs(self, since_seq: int = 0) -> dict[str, Any]:
         return self._app.get_logs(since_seq)
@@ -129,6 +157,19 @@ class JsApi:
 
     def quit_app(self) -> None:
         self._app.request_quit()
+
+    # ------------------------------------------------------------------ 首启向导
+    def get_wizard_state(self) -> dict[str, Any]:
+        return self._app.get_wizard_state()
+
+    def acknowledge_risk(self) -> dict[str, Any]:
+        return self._app.acknowledge_risk()
+
+    def finish_wizard(self) -> dict[str, Any]:
+        return self._app.finish_wizard()
+
+    def restart_wizard(self) -> dict[str, Any]:
+        return self._app.restart_wizard()
 
     # ------------------------------------------------------------------ 元信息
     def get_app_info(self) -> dict[str, Any]:

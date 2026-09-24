@@ -2,3 +2,5 @@
 pywebview>=5.0
 requests>=2.31
 psutil>=5.9
+# M5 图片理解：缩放 / 转码 / 取动图首帧 / 生成图标都要它
+Pillow>=10.0

@@ -15,6 +15,7 @@ import logging
 import time
 from typing import Any
 
+from .chat.moderation import normalize_words
 from .llm.client import LLMError, OpenAIChatClient, normalize_base_url
 from .settings import Settings
 from .version import DEFAULT_ONEBOT_TOKEN
@@ -34,6 +35,9 @@ MODEL_FIELDS = (
     "reply_quote_group",
     "max_reply_chars",
     "notify_error_private",
+    # ---- 风控（需求规格 §9.3）----
+    "rate_limit_per_minute",
+    "blocked_words",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -70,6 +74,8 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "reply_quote_group": bool(settings.get("reply_quote_group")),
         "max_reply_chars": settings.get("max_reply_chars"),
         "notify_error_private": bool(settings.get("notify_error_private")),
+        "rate_limit_per_minute": settings.get("rate_limit_per_minute"),
+        "blocked_words": list(settings.get("blocked_words") or []),
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -163,6 +169,18 @@ def validate_model(payload: dict[str, Any], current: dict[str, Any]) -> dict[str
         elif not 100 <= value <= 5000:
             errors["max_reply_chars"] = "单条回复最大字数必须在 100~5000 之间"
 
+    if "rate_limit_per_minute" in payload:
+        value = _as_int(payload["rate_limit_per_minute"])
+        if value is None:
+            errors["rate_limit_per_minute"] = (
+                "速率上限不能为空" if _is_blank(payload["rate_limit_per_minute"]) else "速率上限必须是整数"
+            )
+        elif not 0 <= value <= 600:
+            errors["rate_limit_per_minute"] = "速率上限必须在 0~600 之间（0 表示不限制）"
+
+    if "blocked_words" in payload and not isinstance(payload["blocked_words"], (list, tuple, str)):
+        errors["blocked_words"] = "敏感词格式不对"
+
     return errors
 
 
@@ -239,6 +257,11 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["notify_error_private"] = bool(payload["error_notice_private"])
     elif "notify_error_private" in payload:
         updates["notify_error_private"] = bool(payload["notify_error_private"])
+    if "rate_limit_per_minute" in payload:
+        updates["rate_limit_per_minute"] = _as_int(payload["rate_limit_per_minute"])
+    if "blocked_words" in payload:
+        # 界面上是一行一个，也容忍逗号 / 顿号分隔
+        updates["blocked_words"] = normalize_words(payload["blocked_words"])
 
     if updates:
         settings.update(**updates)

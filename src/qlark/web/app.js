@@ -116,6 +116,11 @@
     bMaxReplyChars: $('bMaxReplyChars'), eMaxReplyChars: $('eMaxReplyChars'),
     bQuoteGroup: $('bQuoteGroup'), bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
 
+    /* ----- M6：风控设置（对话行为） ----- */
+    bRateLimit: $('bRateLimit'), eRateLimit: $('eRateLimit'),
+    bBlockedWords: $('bBlockedWords'), eBlockedWords: $('eBlockedWords'),
+    bBlockedWordsCount: $('bBlockedWordsCount'),
+
     /* ----- M3：人设配置页 ----- */
     personaCountTag: $('personaCountTag'), btnPersonaNew: $('btnPersonaNew'), personaList: $('personaList'),
     personaEditTitle: $('personaEditTitle'), personaSlotTag: $('personaSlotTag'),
@@ -130,7 +135,48 @@
     btnPersonaSave: $('btnPersonaSave'), btnPersonaResetMemory: $('btnPersonaResetMemory'),
     personaEditHint: $('personaEditHint'),
     permStateTag: $('permStateTag'), permWhitelistOnly: $('permWhitelistOnly'),
-    permQqInput: $('permQqInput'), btnPermAdd: $('btnPermAdd'), permErr: $('permErr'), permChips: $('permChips')
+    permQqInput: $('permQqInput'), btnPermAdd: $('btnPermAdd'), permErr: $('permErr'), permChips: $('permChips'),
+
+    /* ----- M4：记忆面板 ----- */
+    memCfgTag: $('memCfgTag'),
+    memRounds: $('memRounds'), eMemRounds: $('eMemRounds'),
+    memAutoSummary: $('memAutoSummary'),
+    memSummaryModel: $('memSummaryModel'), eMemSummaryModel: $('eMemSummaryModel'),
+    memMaxContext: $('memMaxContext'), eMemMaxContext: $('eMemMaxContext'),
+    btnMemApply: $('btnMemApply'), memCfgHint: $('memCfgHint'),
+    memCapSessions: $('memCapSessions'), memCapMessages: $('memCapMessages'),
+    memCapRuns: $('memCapRuns'), memCapBytes: $('memCapBytes'),
+    memPending: $('memPending'), memPendingText: $('memPendingText'),
+
+    memCountTag: $('memCountTag'), btnMemRefresh: $('btnMemRefresh'), memList: $('memList'),
+    memDetailTitle: $('memDetailTitle'), memDetailPersonaTag: $('memDetailPersonaTag'),
+    memDetailMeta: $('memDetailMeta'), memEmpty: $('memEmpty'), memDetail: $('memDetail'),
+
+    memSummaryTag: $('memSummaryTag'), memSummaryPendingTag: $('memSummaryPendingTag'),
+    memSummaryTime: $('memSummaryTime'), memSummaryBody: $('memSummaryBody'),
+    memSummaryHint: $('memSummaryHint'),
+    btnMemSummarize: $('btnMemSummarize'), btnMemDeleteSummary: $('btnMemDeleteSummary'),
+
+    memMsgCountTag: $('memMsgCountTag'), memMsgHint: $('memMsgHint'), memMsgList: $('memMsgList'),
+    btnMemClear: $('btnMemClear'), memClearHint: $('memClearHint'),
+
+    /* ----- M6：首启向导 ----- */
+    qaWizard: $('qaWizard'),
+    wizardModal: $('wizardModal'), wizardClose: $('wizardClose'),
+    wizardStepTag: $('wizardStepTag'), wizardSteps: $('wizardSteps'),
+    wizardQuit: $('wizardQuit'), wizardBack: $('wizardBack'), wizardSkip: $('wizardSkip'),
+    wizardNext: $('wizardNext'), wizardFinish: $('wizardFinish'), wizardFootHint: $('wizardFootHint'),
+    wizRiskAck: $('wizRiskAck'),
+    wizBaseUrl: $('wizBaseUrl'), wizApiKey: $('wizApiKey'), wizApiKeyHint: $('wizApiKeyHint'),
+    wizModel: $('wizModel'), wizTestBtn: $('wizTestBtn'), wizTestResult: $('wizTestResult'),
+    wizLoginDot: $('wizLoginDot'), wizLoginPhase: $('wizLoginPhase'), wizLoginMeta: $('wizLoginMeta'),
+    wizLoginStart: $('wizLoginStart'), wizLoginKv: $('wizLoginKv'),
+    wizQrImg: $('wizQrImg'), wizQrEmpty: $('wizQrEmpty'),
+    wizLoginOk: $('wizLoginOk'), wizLoginOkText: $('wizLoginOkText'),
+    wizPersonaList: $('wizPersonaList'), wizPersonaEdit: $('wizPersonaEdit'), wizPersonaEmpty: $('wizPersonaEmpty'),
+    wizPersonaName: $('wizPersonaName'), wizPersonaPrompt: $('wizPersonaPrompt'),
+    wizPromptCount: $('wizPromptCount'), wizPersonaSave: $('wizPersonaSave'), wizPersonaHint: $('wizPersonaHint'),
+    wizSummary: $('wizSummary')
   };
 
   /* ---------------- 运行时状态 ---------------- */
@@ -163,7 +209,39 @@
     personas: [],          // list_personas 结果（已按 slot 升序）
     personaDefaultUid: null,
     personaUid: null,      // 当前选中的人设 uid
-    perm: null             // {whitelist_only, whitelist}
+    perm: null,            // {whitelist_only, whitelist}
+
+    /* ----- M4 ----- */
+    memCfg: null,          // get_memory_config 归一化结果
+    memCfgLoaded: false,
+    memRuns: null,         // 已压缩次数（summary_runs，随配置一起返回）
+    memOverview: null,     // 容量提示（get_memory_config / list_memories 都会带）
+    memories: [],          // list_memories 结果
+    memKey: null,          // 当前选中的 memory_key
+    memDetail: null,       // get_memory 归一化结果
+    memDetailKey: null,    // memDetail 对应的 key（防止慢响应覆盖新选择）
+    memListBusy: false,    // list_memories 请求飞行中
+    memEditingId: null,    // 正在就地编辑的原文 id
+    memEditBusy: false,    // update_memory_message 请求飞行中
+
+    /* ----- M6：首启向导 ----- */
+    wiz: null,             // get_wizard_state 归一化结果
+    wizLoaded: false,
+    wizOpen: false,
+    wizAuto: false,        // 是否由「首次运行自动弹出」打开
+    wizStep: 0,            // 0 风控 / 1 模型 / 2 登录 / 3 人设 / 4 完成
+    wizMaxStep: 0,         // 本次打开到过的最远步骤（指示器回跳用）
+    wizSkipped: { model: false, login: false, persona: false },
+    wizModelOK: false,     // 本次向导里模型是否已测通
+    wizModelPreloaded: false,
+    wizTestBusy: false,
+    wizLoginStarted: false,
+    wizLoginDone: false,   // 是否已就「登录成功」刷新过向导状态
+    wizLoginTimer: null,
+    wizQrSrc: null,
+    wizPersonas: [],
+    wizPersonaUid: null,
+    wizBusy: false
   };
 
   /* ---------------- 工具函数 ---------------- */
@@ -226,6 +304,18 @@
   function clip(text, max) {
     var s = (text === undefined || text === null) ? '' : String(text);
     return s.length > max ? (s.slice(0, max) + '…') : s;
+  }
+
+  // 字节数 → 易读体积（记忆面板的「占用体积」）
+  function fmtBytes(n) {
+    var v = Number(n);
+    if (!isFinite(v) || v < 0) v = 0;
+    if (v < 1024) return Math.round(v) + ' B';
+    var kb = v / 1024;
+    if (kb < 1024) return (kb < 10 ? kb.toFixed(1) : String(Math.round(kb))) + ' KB';
+    var mb = kb / 1024;
+    if (mb < 1024) return (mb < 10 ? mb.toFixed(1) : String(Math.round(mb))) + ' MB';
+    return (mb / 1024).toFixed(2) + ' GB';
   }
 
   function show(node, on) { if (node) node.hidden = !on; }
@@ -861,6 +951,9 @@
       loadAccounts();
     } else if (page === 'persona') {
       loadPersonas();
+    } else if (page === 'memory') {
+      // 记忆页：参数与列表每次进入都重新拉（别的页面也可能改动记忆）
+      refreshMemoryPage();
     }
   }
 
@@ -882,7 +975,10 @@
     memory_rounds: ['bMemoryRounds', 'eMemoryRounds'],
     max_reply_chars: ['bMaxReplyChars', 'eMaxReplyChars'],
     reply_quote_group: ['bQuoteGroup', null],
-    error_notice_private: ['bErrorNotice', null]
+    error_notice_private: ['bErrorNotice', null],
+    // M6：风控
+    rate_limit_per_minute: ['bRateLimit', 'eRateLimit'],
+    blocked_words: ['bBlockedWords', 'eBlockedWords']
   };
 
   var NAPCAT_FIELDS = {
@@ -995,8 +1091,31 @@
       reply_quote_group: asBool(s.reply_quote_group, false),
       max_reply_chars: numOr(s.max_reply_chars, 500),
       error_notice_private: asBool(noticeRaw, true),
+      rate_limit_per_minute: numOr(s.rate_limit_per_minute, 0),
+      blocked_words: normalizeWordList(s.blocked_words),
       restart_required: !!s.restart_required
     };
+  }
+
+  // 屏蔽词：契约是字符串数组；后端万一回的是整段文本（换行分隔）也照样能读
+  function normalizeWordList(raw) {
+    var out = [];
+    var list = Array.isArray(raw) ? raw : ((typeof raw === 'string' && raw !== '') ? raw.split(/\r?\n/) : []);
+    list.forEach(function (x) {
+      var w = asStr(x).trim();
+      if (w !== '' && out.indexOf(w) === -1) out.push(w);
+    });
+    return out;
+  }
+
+  // textarea 文本 → 屏蔽词数组（去空行、去首尾空格）
+  function parseWordList(text) {
+    return normalizeWordList(asStr(text).split(/\r?\n/));
+  }
+
+  function renderBlockedWordsCount() {
+    if (!dom.bBlockedWordsCount || !dom.bBlockedWords) return;
+    setText(dom.bBlockedWordsCount, parseWordList(dom.bBlockedWords.value).length + ' 个');
   }
 
   function renderNapcatRestartTag() {
@@ -1042,6 +1161,9 @@
     dom.bMaxReplyChars.value = String(cfg.max_reply_chars);
     dom.bQuoteGroup.checked = !!cfg.reply_quote_group;
     dom.bErrorNotice.checked = !!cfg.error_notice_private;
+    dom.bRateLimit.value = String(cfg.rate_limit_per_minute);
+    dom.bBlockedWords.value = cfg.blocked_words.join('\n');
+    renderBlockedWordsCount();
 
     S.napcatRestartRequired = !!cfg.restart_required;
     renderNapcatRestartTag();
@@ -1080,6 +1202,9 @@
     payload.reply_quote_group = !!dom.bQuoteGroup.checked;
     payload.max_reply_chars = inputNum(dom.bMaxReplyChars);
     payload.error_notice_private = !!dom.bErrorNotice.checked;
+    // M6：风控（textarea 每行一个词 → 数组）
+    payload.rate_limit_per_minute = inputNum(dom.bRateLimit);
+    payload.blocked_words = parseWordList(dom.bBlockedWords.value);
     // 后端若返回过 auto_summary（记忆面板 M4 用），原样带回去，避免被重置
     if (S.model && S.model.auto_summary !== null) payload.auto_summary = S.model.auto_summary;
     return payload;
@@ -1698,6 +1823,1310 @@
     });
   }
 
+  /* ============================================================
+     M4：记忆面板
+     - 顶部记忆参数（apply_memory_config）+ 容量提示
+     - 左栏按会话列出记忆，右栏展示摘要与原文（可编辑 / 删除 / 压缩）
+     - 后端字段缺失时一律兜底：页面上不出现 undefined / NaN / Invalid Date
+     ============================================================ */
+
+  // 后端字段名 → [输入框 id, 错误提示 id]
+  var MEMORY_FIELDS = {
+    memory_rounds: ['memRounds', 'eMemRounds'],
+    auto_summary: ['memAutoSummary', null],
+    summary_model: ['memSummaryModel', 'eMemSummaryModel'],
+    max_context_chars: ['memMaxContext', 'eMemMaxContext']
+  };
+
+  function normalizeMemOverview(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    return {
+      sessions: Math.max(0, numOr(s.sessions, 0)),
+      messages: Math.max(0, numOr(s.messages, 0)),
+      summaries: Math.max(0, numOr(s.summaries, 0)),
+      pending: Math.max(0, numOr(s.pending, 0)),
+      content_bytes: Math.max(0, numOr(s.content_bytes, 0)),
+      db_bytes: Math.max(0, numOr(s.db_bytes, 0))
+    };
+  }
+
+  function normalizeMemoryConfig(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    return {
+      memory_rounds: numOr(s.memory_rounds, 20),
+      auto_summary: asBool(s.auto_summary, true),
+      summary_model: asStr(s.summary_model),
+      max_context_chars: numOr(s.max_context_chars, 24000),
+      summary_runs: Math.max(0, numOr(s.summary_runs, 0)),
+      summary_max_chars: Math.max(1, numOr(s.summary_max_chars, 300)),
+      overview: normalizeMemOverview(s.overview)
+    };
+  }
+
+  function normalizeMemoryItem(raw) {
+    var m = (raw && typeof raw === 'object') ? raw : {};
+    var key = asStr(m.memory_key);
+    var sid = asStr(m.session_id);
+
+    var type = asStr(m.session_type).toLowerCase();
+    if (type !== 'group' && type !== 'private') {
+      // 契约只保证 group / private；缺失时按 session_id 前缀兜底
+      type = /^group:/.test(sid) ? 'group' : 'private';
+    }
+
+    var ref = asStr(m.session_ref);
+    if (ref === '') ref = sid ? String(sid).split(':').pop() : '';
+
+    var uidRaw = Number(m.persona_uid);
+    var uid = (isFinite(uidRaw) && uidRaw > 0) ? uidRaw : null;
+    var personaName = asStr(m.persona_name);
+    if (personaName === '') personaName = (uid === null) ? '未知人设' : ('人设' + uid);
+
+    var total = Math.max(0, numOr(m.messages, 0));
+    var compressed = Math.max(0, numOr(m.compressed, 0));
+    if (compressed > total) compressed = total;
+
+    var updated = numOr(m.updated_at, 0);
+    if (!isFinite(updated) || updated <= 0) updated = 0;
+
+    return {
+      memory_key: key,
+      session_id: sid,
+      session_type: type,
+      session_ref: ref,
+      persona_uid: uid,
+      persona_name: personaName,
+      messages: total,
+      compressed: compressed,
+      summary_chars: Math.max(0, numOr(m.summary_chars, 0)),
+      summary_pending: !!m.summary_pending,
+      updated_at: updated
+    };
+  }
+
+  function normalizeMemoriesPayload(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    var list = Array.isArray(s.memories) ? s.memories : [];
+    var out = list.map(normalizeMemoryItem).filter(function (m) { return m.memory_key !== ''; });
+    out.sort(function (a, b) { return b.updated_at - a.updated_at; });
+    return { memories: out, overview: normalizeMemOverview(s.overview) };
+  }
+
+  function normalizeMemoryMessage(raw) {
+    var m = (raw && typeof raw === 'object') ? raw : {};
+    var idRaw = Number(m.id);
+    var id = isFinite(idRaw) ? idRaw : null;
+
+    var role = asStr(m.role).toLowerCase();
+    if (role !== 'user' && role !== 'assistant') role = 'user';
+
+    var ts = Number(m.created_at);
+    if (!isFinite(ts) || ts <= 0) ts = 0;
+
+    return {
+      id: id,
+      role: role,
+      content: asStr(m.content),
+      has_image: !!m.has_image,
+      tokens: Math.max(0, numOr(m.tokens, 0)),
+      created_at: ts,
+      summarized: !!m.summarized
+    };
+  }
+
+  function normalizeMemoryDetail(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    var msgs = Array.isArray(s.messages) ? s.messages : [];
+    var upd = Number(s.summary_updated_at);
+    if (!isFinite(upd) || upd <= 0) upd = 0;
+    return {
+      memory_key: asStr(s.memory_key),
+      summary: asStr(s.summary),
+      summary_pending: !!s.summary_pending,
+      summary_updated_at: upd,
+      messages: msgs.map(normalizeMemoryMessage)
+    };
+  }
+
+  /* ---------------- M4：取数 ---------------- */
+
+  function loadMemoryConfig() {
+    return apiCall('get_memory_config').then(function (res) {
+      S.memCfgLoaded = true;
+      var cfg = normalizeMemoryConfig(res);
+      S.memCfg = cfg;
+      S.memRuns = cfg.summary_runs;
+      S.memOverview = cfg.overview;
+      renderMemoryConfig();
+      renderCapacity();
+    }, function (err) {
+      S.memCfgLoaded = false;
+      setClass(dom.memCfgTag, 'tag err');
+      setText(dom.memCfgTag, '读取失败');
+      toast('记忆参数读取失败：' + errText(err), 'err');
+      if (window.console) console.warn('get_memory_config 失败：', err);
+    });
+  }
+
+  // 只刷新左栏列表 + 容量提示，不动右栏（避免打断正在进行的编辑 / 覆盖未保存内容）
+  function loadMemoryList(silent) {
+    if (S.memListBusy) return Promise.resolve();
+    S.memListBusy = true;
+    return apiCall('list_memories').then(function (res) {
+      S.memListBusy = false;
+      var data = normalizeMemoriesPayload(res);
+      S.memories = data.memories;
+      S.memOverview = data.overview;
+      renderMemoryList();
+      renderCapacity();
+    }, function (err) {
+      S.memListBusy = false;
+      setClass(dom.memCountTag, 'tag err');
+      setText(dom.memCountTag, '读取失败');
+      if (!silent) toast('记忆列表读取失败：' + errText(err), 'err');
+      if (window.console) console.warn('list_memories 失败：', err);
+    });
+  }
+
+  function loadMemoryDetail(key) {
+    if (!key) {
+      S.memDetail = null;
+      S.memDetailKey = null;
+      S.memEditingId = null;
+      renderMemoryDetail();
+      return Promise.resolve();
+    }
+    return apiCall('get_memory', key).then(function (res) {
+      if (S.memKey !== key) return;          // 用户已经切走了，丢弃这次响应
+      if (res && res.ok === false) {
+        S.memDetail = null;
+        S.memDetailKey = null;
+        toast('读取记忆失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        renderMemoryDetail();
+        loadMemoryList(true);
+        return;
+      }
+      S.memDetail = normalizeMemoryDetail(res);
+      S.memDetailKey = key;
+      S.memEditingId = null;
+      S.memEditBusy = false;
+      renderMemoryDetail();
+    }, function (err) {
+      if (S.memKey !== key) return;
+      S.memDetail = null;
+      S.memDetailKey = null;
+      toast('读取记忆失败：' + errText(err), 'err');
+      renderMemoryDetail();
+    });
+  }
+
+  // 变更后重新对齐「列表 + 详情」：key 还在就保持选中，不在了（例如被清空）就退回第一条
+  function reloadAfterMutation(key) {
+    return loadMemoryList(true).then(function () {
+      var found = null;
+      S.memories.forEach(function (m) { if (m.memory_key === key) found = m; });
+      if (!found) {
+        S.memKey = S.memories.length ? S.memories[0].memory_key : null;
+        S.memEditingId = null;
+      }
+      renderMemoryList();
+      return loadMemoryDetail(S.memKey);
+    });
+  }
+
+  // 进入记忆页 / 手动刷新：参数 + 列表都要重来
+  function refreshMemoryPage() {
+    loadMemoryConfig();
+    if (!S.memDetail) renderMemoryDetail();
+    return reloadAfterMutation(S.memKey);
+  }
+
+  /* ---------------- M4：渲染 ---------------- */
+
+  function renderMemoryConfig() {
+    var cfg = S.memCfg;
+    clearFieldErrors(MEMORY_FIELDS);
+    if (!cfg) return;
+
+    dom.memRounds.value = String(cfg.memory_rounds);
+    dom.memAutoSummary.checked = !!cfg.auto_summary;
+    dom.memSummaryModel.value = cfg.summary_model;
+    dom.memMaxContext.value = String(cfg.max_context_chars);
+
+    setClass(dom.memCfgTag, 'tag ' + (cfg.auto_summary ? 'ok' : 'warn'));
+    setText(dom.memCfgTag, cfg.auto_summary ? '自动总结已开启' : '自动总结已关闭');
+    setText(dom.memCfgHint, '摘要上限 ' + fmtNum(cfg.summary_max_chars) + ' 字，超出会被截断');
+  }
+
+  function renderCapacity() {
+    var ov = S.memOverview;
+    setText(dom.memCapSessions, ov ? fmtNum(ov.sessions) : '—');
+    setText(dom.memCapMessages, ov ? fmtNum(ov.messages) : '—');
+    setText(dom.memCapRuns, (S.memRuns === null) ? '—' : fmtNum(S.memRuns));
+    setText(dom.memCapBytes, ov ? fmtBytes(ov.db_bytes) : '—');
+
+    var pending = ov ? ov.pending : 0;
+    show(dom.memPending, pending > 0);
+    setText(dom.memPendingText, '有 ' + fmtNum(pending) + ' 个会话的压缩失败待重试');
+  }
+
+  function renderMemoryList() {
+    var list = dom.memList;
+    list.textContent = '';
+    setClass(dom.memCountTag, 'tag');
+    setText(dom.memCountTag, S.memories.length + ' 个');
+
+    if (!S.memories.length) {
+      list.appendChild(mk('li', 'mem-empty-row', '还没有任何记忆。让机器人聊几句就会出现。'));
+      return;
+    }
+
+    S.memories.forEach(function (m) {
+      var row = mk('li', 'mem-row' + (m.memory_key === S.memKey ? ' active' : ''));
+      row.setAttribute('data-key', m.memory_key);
+
+      var top = mk('div', 'mem-row-top');
+      var kind = (m.session_type === 'group' ? '群 ' : '私聊 ') + (m.session_ref || '未知会话');
+      top.appendChild(mk('span', 'mem-kind', kind));
+      top.appendChild(mk('span', 'mem-time', fmtRel(m.updated_at) || '时间未知'));
+      row.appendChild(top);
+
+      var mid = mk('div', 'mem-row-mid');
+      mid.appendChild(mk('span', 'mem-persona', m.persona_name));
+      mid.appendChild(mk('span', 'mem-count',
+        fmtNum(m.messages) + ' 条原文 · ' + fmtNum(m.compressed) + ' 条已压缩'));
+      row.appendChild(mid);
+
+      var flags = mk('div', 'mem-row-flags');
+      if (m.summary_chars > 0) flags.appendChild(mk('span', 'tag ok mem-flag', '有摘要'));
+      if (m.summary_pending) flags.appendChild(mk('span', 'tag warn mem-flag', '待重试'));
+      if (flags.childNodes.length) row.appendChild(flags);
+
+      row.title = kind + ' · ' + m.persona_name + ' · ' + m.memory_key;
+      row.addEventListener('click', function () { selectMemory(m.memory_key); });
+      list.appendChild(row);
+    });
+  }
+
+  function currentMemoryItem() {
+    var found = null;
+    S.memories.forEach(function (m) { if (m.memory_key === S.memKey) found = m; });
+    return found;
+  }
+
+  function renderMemoryDetail() {
+    var d = S.memDetail;
+
+    if (!d) {
+      show(dom.memDetail, false);
+      show(dom.memEmpty, true);
+      setText(dom.memEmpty, S.memKey ? '正在读取该会话的记忆…' : '请从左侧选择一个会话');
+      setText(dom.memDetailTitle, '记忆详情');
+      show(dom.memDetailPersonaTag, false);
+      setText(dom.memDetailMeta, '');
+      return;
+    }
+
+    show(dom.memEmpty, false);
+    show(dom.memDetail, true);
+
+    var item = currentMemoryItem();
+    var kind = item ? (item.session_type === 'group' ? '群 ' : '私聊 ') : '';
+    setText(dom.memDetailTitle, kind + ((item && item.session_ref) ? item.session_ref : (d.memory_key || '记忆详情')));
+
+    if (item) {
+      show(dom.memDetailPersonaTag, true);
+      setClass(dom.memDetailPersonaTag, 'tag');
+      setText(dom.memDetailPersonaTag, '人设：' + item.persona_name);
+    } else {
+      show(dom.memDetailPersonaTag, false);
+    }
+
+    var compressed = item ? item.compressed : d.messages.filter(function (m) { return m.summarized; }).length;
+    var meta = fmtNum(d.messages.length) + ' 条原文 · ' + fmtNum(compressed) + ' 条已压缩';
+    var rel = item ? fmtRel(item.updated_at) : null;
+    if (rel) meta += ' · 更新于 ' + rel;
+    setText(dom.memDetailMeta, meta);
+
+    renderSummaryBox(d);
+    renderMessageList();
+  }
+
+  function renderSummaryBox(d) {
+    var hasSummary = d.summary !== '';
+    var maxChars = S.memCfg ? S.memCfg.summary_max_chars : 300;
+
+    if (hasSummary) {
+      setClass(dom.memSummaryTag, 'tag ok');
+      setText(dom.memSummaryTag, '摘要 ' + fmtNum(d.summary.length) + ' 字');
+    } else {
+      setClass(dom.memSummaryTag, 'tag');
+      setText(dom.memSummaryTag, '暂无摘要');
+    }
+
+    show(dom.memSummaryPendingTag, d.summary_pending);
+
+    var rel = fmtRel(d.summary_updated_at);
+    setText(dom.memSummaryTime, (hasSummary && rel) ? ('摘要更新于 ' + rel) : '');
+
+    var body = dom.memSummaryBody;
+    if (hasSummary) {
+      setClass(body, 'mem-summary-body');
+      setText(body, d.summary);
+    } else if (d.summary_pending) {
+      setClass(body, 'mem-summary-body pending');
+      setText(body, '上次压缩失败，将在下一轮自动重试');
+    } else {
+      setClass(body, 'mem-summary-body empty');
+      setText(body, '暂无摘要（原文满 W 轮后会自动生成）');
+    }
+
+    setText(dom.memSummaryHint, '摘要上限 ' + fmtNum(maxChars) + ' 字 · 手动压缩同样受 W 轮门槛限制');
+    dom.btnMemDeleteSummary.disabled = !hasSummary;
+    dom.btnMemDeleteSummary.title = hasSummary
+      ? '删除摘要，被压缩的原文会恢复为未压缩状态'
+      : '该会话还没有摘要';
+    dom.btnMemSummarize.disabled = false;
+    dom.btnMemSummarize.title = '立即压缩最早的 W 轮未压缩原文';
+  }
+
+  function renderMessageList() {
+    var box = dom.memMsgList;
+    box.textContent = '';
+
+    var d = S.memDetail;
+    var msgs = d ? d.messages : [];
+    setText(dom.memMsgCountTag, fmtNum(msgs.length) + ' 条');
+    setText(dom.memMsgHint, msgs.length ? '灰色「已压缩」表示已并入摘要' : '');
+    dom.btnMemClear.disabled = !(msgs.length || (d && d.summary !== ''));
+    setText(dom.memClearHint, msgs.length
+      ? ('将删除 ' + fmtNum(msgs.length) + ' 条原文' + ((d && d.summary !== '') ? '和摘要' : '') + '，不可恢复')
+      : '该会话暂无可清空的内容');
+
+    if (!msgs.length) {
+      box.appendChild(mk('li', 'mem-msg-empty', '该会话还没有原文'));
+      return;
+    }
+
+    msgs.forEach(function (m) {
+      var editing = (S.memEditingId !== null && S.memEditingId === m.id && m.id !== null);
+      var li = mk('li', 'mem-msg' + (editing ? ' editing' : '') + (m.summarized ? ' compressed' : ''));
+      li.setAttribute('data-id', (m.id === null) ? '' : String(m.id));
+
+      var head = mk('div', 'mem-msg-head');
+      head.appendChild(mk('span', 'mem-role ' + m.role, m.role === 'assistant' ? '机器人' : '用户'));
+      head.appendChild(mk('span', 'mem-msg-time', fmtRel(m.created_at) || '时间未知'));
+      if (m.has_image) head.appendChild(mk('span', 'mem-msg-img', '含图片'));
+      if (m.summarized) head.appendChild(mk('span', 'tag mem-flag', '已压缩'));
+      if (m.tokens > 0) head.appendChild(mk('span', 'mem-msg-tokens', fmtNum(m.tokens) + ' tokens'));
+      head.appendChild(mk('span', 'spacer'));
+
+      if (m.id === null) {
+        head.appendChild(mk('span', 'mem-msg-tokens', '缺少 id，不可编辑'));
+      } else if (!editing) {
+        var editBtn = mk('button', 'btn ghost sm mem-act', '编辑');
+        editBtn.type = 'button';
+        editBtn.disabled = !!S.memEditBusy;
+        editBtn.addEventListener('click', function () { startEditMessage(m.id); });
+        head.appendChild(editBtn);
+
+        var delBtn = mk('button', 'btn ghost sm mem-act danger-text', '删除');
+        delBtn.type = 'button';
+        delBtn.disabled = !!S.memEditBusy;
+        delBtn.addEventListener('click', function () { deleteMessage(m.id, m.content); });
+        head.appendChild(delBtn);
+      }
+      li.appendChild(head);
+
+      if (editing) {
+        var ta = mk('textarea', 'textarea mem-edit-textarea');
+        ta.value = m.content;
+        ta.rows = 3;
+        ta.spellcheck = false;
+        ta.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') { ev.preventDefault(); cancelEditMessage(); }
+          else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+            ev.preventDefault();
+            saveEditMessage(m.id);
+          }
+        });
+        li.appendChild(ta);
+
+        var foot = mk('div', 'mem-edit-foot');
+        var saveBtn = mk('button', 'btn primary sm mem-act-save', '保存');
+        saveBtn.type = 'button';
+        saveBtn.disabled = !!S.memEditBusy;
+        saveBtn.addEventListener('click', function () { saveEditMessage(m.id); });
+        foot.appendChild(saveBtn);
+
+        var cancelBtn = mk('button', 'btn ghost sm', '取消');
+        cancelBtn.type = 'button';
+        cancelBtn.disabled = !!S.memEditBusy;
+        cancelBtn.addEventListener('click', cancelEditMessage);
+        foot.appendChild(cancelBtn);
+        foot.appendChild(mk('span', 'foot-hint', 'Ctrl+Enter 保存 · Esc 取消'));
+        li.appendChild(foot);
+      } else {
+        li.appendChild(mk('div', 'mem-msg-body' + (m.content ? '' : ' empty'), m.content || '（空内容）'));
+      }
+
+      box.appendChild(li);
+    });
+  }
+
+  /* ---------------- M4：交互 ---------------- */
+
+  function selectMemory(key) {
+    if (!key || key === S.memKey) return;
+    S.memKey = key;
+    S.memEditingId = null;
+    S.memEditBusy = false;
+    S.memDetail = null;
+    S.memDetailKey = null;
+    renderMemoryList();
+    renderMemoryDetail();
+    loadMemoryDetail(key);
+  }
+
+  function findMessage(id) {
+    var found = null;
+    if (!S.memDetail) return null;
+    S.memDetail.messages.forEach(function (m) { if (m.id === id) found = m; });
+    return found;
+  }
+
+  function startEditMessage(id) {
+    if (id === null || id === undefined) return;
+    S.memEditingId = id;
+    renderMessageList();
+    var ta = dom.memMsgList.querySelector('.mem-edit-textarea');
+    if (ta) {
+      ta.focus();
+      try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* ignore */ }
+    }
+  }
+
+  function cancelEditMessage() {
+    if (S.memEditBusy) return;
+    S.memEditingId = null;
+    renderMessageList();
+  }
+
+  function saveEditMessage(id) {
+    if (S.memEditBusy) return;
+    var ta = dom.memMsgList.querySelector('.mem-edit-textarea');
+    if (!ta) return;
+    var text = ta.value;
+    if (!text.trim()) { toast('记忆内容不能为空', 'warn'); ta.focus(); return; }
+
+    S.memEditBusy = true;
+    var btn = dom.memMsgList.querySelector('.mem-act-save');
+    setBusy(btn, true, '保存中…');
+
+    apiCall('update_memory_message', id, text).then(function (res) {
+      S.memEditBusy = false;
+      if (res && res.ok === false) {
+        setBusy(btn, false);
+        toast('保存失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        return;
+      }
+      var m = findMessage(id);
+      if (m) m.content = hasText(res && res.content) ? String(res.content) : text;
+      S.memEditingId = null;
+      renderMessageList();
+      toast('已修改记忆 #' + id, 'ok');
+      loadMemoryList(true);
+    }, function (err) {
+      S.memEditBusy = false;
+      setBusy(btn, false);
+      toast('保存失败：' + errText(err), 'err');
+    });
+  }
+
+  function deleteMessage(id, content) {
+    if (id === null || id === undefined) return;
+    var key = S.memKey;
+    var preview = clip((content || '').replace(/\s+/g, ' '), 40) || '（空内容）';
+    var msg = '确定删除这条原文记忆？\n\n「' + preview + '」\n\n' +
+      '删除后不可恢复；若它已被压缩进摘要，摘要文字本身不会改变。';
+    if (!window.confirm(msg)) return;
+
+    apiCall('delete_memory_message', id).then(function (res) {
+      if (res && res.ok === false) {
+        toast('删除失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        return;
+      }
+      toast('已删除记忆 #' + id, 'ok');
+      if (S.memEditingId === id) S.memEditingId = null;
+      reloadAfterMutation(key);
+    }, function (err) {
+      toast('删除失败：' + errText(err), 'err');
+    });
+  }
+
+  function deleteMemorySummary() {
+    var key = S.memKey;
+    if (!key || !S.memDetail || S.memDetail.summary === '') { toast('该会话还没有摘要', 'warn'); return; }
+    var compressed = S.memDetail.messages.filter(function (m) { return m.summarized; }).length;
+    var msg = '确定删除该会话的长期记忆摘要？\n\n' +
+      '将删除 ' + fmtNum(S.memDetail.summary.length) + ' 字摘要；原本被压缩的 ' +
+      fmtNum(compressed) + ' 条原文会恢复为未压缩状态（内容不会丢），' +
+      '机器人会重新逐字看到它们，直到再次压缩。\n\n此操作不可恢复。';
+    if (!window.confirm(msg)) return;
+
+    var btn = dom.btnMemDeleteSummary;
+    setBusy(btn, true, '删除中…');
+    apiCall('delete_memory_summary', key).then(function (res) {
+      setBusy(btn, false);
+      if (res && res.ok === false) {
+        toast('删除摘要失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        return;
+      }
+      toast('已删除摘要，原文已恢复为未压缩状态', 'ok');
+      loadMemoryConfig();
+      reloadAfterMutation(key);
+    }, function (err) {
+      setBusy(btn, false);
+      toast('删除摘要失败：' + errText(err), 'err');
+    });
+  }
+
+  function clearMemory() {
+    var key = S.memKey;
+    if (!key || !S.memDetail) return;
+    var n = S.memDetail.messages.length;
+    var hasSum = S.memDetail.summary !== '';
+    if (!n && !hasSum) { toast('该会话没有可清空的记忆', 'warn'); return; }
+
+    var msg = '确定清空该会话的全部记忆？\n\n' +
+      '将删除 ' + fmtNum(n) + ' 条原文' + (hasSum ? '和长期记忆摘要' : '') + '，不可恢复。\n' +
+      '清空后机器人会从这个会话的空白记忆重新开始。';
+    if (!window.confirm(msg)) return;
+
+    var btn = dom.btnMemClear;
+    setBusy(btn, true, '清空中…');
+    apiCall('clear_memory', key).then(function (res) {
+      setBusy(btn, false);
+      if (res && res.ok === false) {
+        toast('清空失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        return;
+      }
+      toast('已清空该会话记忆（' + fmtNum(numOr(res && res.deleted_messages, n)) + ' 条原文 + 摘要）', 'ok');
+      S.memEditingId = null;
+      loadMemoryConfig();
+      reloadAfterMutation(key);
+    }, function (err) {
+      setBusy(btn, false);
+      toast('清空失败：' + errText(err), 'err');
+    });
+  }
+
+  function summarizeNow() {
+    var key = S.memKey;
+    if (!key) return;
+    var btn = dom.btnMemSummarize;
+    setBusy(btn, true, '压缩中…');
+    apiCall('summarize_memory_now', key).then(function (res) {
+      setBusy(btn, false);
+      var r = (res && typeof res === 'object') ? res : {};
+      var text = hasText(r.message) ? String(r.message) : (r.ok ? '已压缩' : '压缩未执行');
+      // not_enough / disabled 不是错误，但也不是成功：用橙色提示区分开
+      var kind = r.ok ? 'ok' : ((r.status === 'failed' || r.status === 'empty') ? 'err' : 'warn');
+      toast(text, kind);
+      // failed / empty 会改动 pending 状态，无论成败都刷新一遍
+      loadMemoryConfig();
+      reloadAfterMutation(key);
+    }, function (err) {
+      setBusy(btn, false);
+      toast('压缩失败：' + errText(err), 'err');
+    });
+  }
+
+  function applyMemoryConfig() {
+    var payload = {
+      // 输入框被清空时提交 null（而不是 0），让后端回「不能为空」
+      memory_rounds: inputNum(dom.memRounds),
+      auto_summary: !!dom.memAutoSummary.checked,
+      summary_model: dom.memSummaryModel.value.trim(),
+      max_context_chars: inputNum(dom.memMaxContext)
+    };
+
+    var btn = dom.btnMemApply;
+    setBusy(btn, true, '应用中…');
+    return apiCall('apply_memory_config', payload).then(function (res) {
+      setBusy(btn, false);
+      if (res && res.ok === false) {
+        var r = renderFieldErrors(MEMORY_FIELDS, res.errors);
+        var msgs = r.unknown.slice();
+        if (!r.shown && !msgs.length && hasText(res.error)) msgs.push(String(res.error));
+        if (!r.shown && !msgs.length && hasText(res.message)) msgs.push(String(res.message));
+        toast(msgs.length ? msgs[0] : '记忆参数未保存，请检查标红字段', 'err');
+        return;
+      }
+      clearFieldErrors(MEMORY_FIELDS);
+      // 成功时后端回的就是完整配置，直接拿来渲染，省一次往返
+      var cfg = normalizeMemoryConfig(res);
+      S.memCfg = cfg;
+      S.memCfgLoaded = true;
+      S.memRuns = cfg.summary_runs;
+      S.memOverview = cfg.overview;
+      renderMemoryConfig();
+      renderCapacity();
+      toast('已应用记忆参数', 'ok');
+      // 模型配置页里也有一份 memory_rounds / auto_summary，标记为待重读，
+      // 否则用户切回去点「应用」会用旧值把刚改的覆盖掉
+      S.modelLoaded = false;
+      loadMemoryList(true);
+    }, function (err) {
+      setBusy(btn, false);
+      toast('应用失败：' + errText(err), 'err');
+    });
+  }
+
+  /* ============================================================
+     M6：首启向导
+     - 后端契约：get_wizard_state / acknowledge_risk / finish_wizard / restart_wizard
+     - 其余步骤全部复用已有接口：get_model_config / apply_model_config / test_model /
+       start / get_state / list_personas / update_persona
+     - 关闭向导不写 first_run_done：下次启动会再次弹出
+     ============================================================ */
+
+  var WIZ_STEP_COUNT = 5;
+  // 前 4 项与后端 steps.* 同名；第 5 项「完成」不对应后端字段，看的是 first_run_done
+  var WIZ_STEP_KEYS = ['risk', 'model', 'login', 'persona', null];
+  var WIZ_STEP_NAMES = ['风控提示', '模型配置', '登录 QQ', '人设', '完成'];
+  var WIZ_LOGIN_POLL_MS = 2000;
+
+  function normalizeWizardState(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    var st = (s.steps && typeof s.steps === 'object') ? s.steps : {};
+    var d = (s.detail && typeof s.detail === 'object') ? s.detail : {};
+    var pc = Number(d.persona_count);
+    return {
+      first_run_done: !!s.first_run_done,
+      risk_acknowledged: !!s.risk_acknowledged,
+      steps: {
+        risk: !!st.risk,
+        model: !!st.model,
+        login: !!st.login,
+        persona: !!st.persona
+      },
+      detail: {
+        phase: hasText(d.phase) ? String(d.phase) : 'idle',
+        qq: hasText(d.qq) ? String(d.qq) : null,
+        model: hasText(d.model) ? String(d.model) : '',
+        base_url: hasText(d.base_url) ? String(d.base_url) : '',
+        persona_count: (isFinite(pc) && pc >= 0) ? pc : 0
+      }
+    };
+  }
+
+  function wizState() { return S.wiz || normalizeWizardState(null); }
+
+  function resetWizardCache() {
+    S.wizStep = 0;
+    S.wizMaxStep = 0;
+    S.wizSkipped = { model: false, login: false, persona: false };
+    S.wizModelOK = false;
+    S.wizModelPreloaded = false;
+    S.wizTestBusy = false;
+    S.wizLoginStarted = false;
+    S.wizLoginDone = false;
+    S.wizQrSrc = null;
+    S.wizPersonas = [];
+    S.wizPersonaUid = null;
+    S.wizBusy = false;
+    stopWizardLoginPoll();
+  }
+
+  // auto=true：首次运行未完成时自动弹出向导
+  function loadWizardState(auto) {
+    return apiCall('get_wizard_state').then(function (res) {
+      S.wizLoaded = true;
+      S.wiz = normalizeWizardState(res);
+      renderWizardSteps();
+      // 停在完成页时，汇总表也要跟着最新状态重画
+      if (S.wizOpen && S.wizStep === 4) renderWizardSummary();
+      if (auto && !S.wiz.first_run_done && !S.wizOpen && !S.modalOpen) openWizard(true);
+    }, function (err) {
+      S.wizLoaded = false;
+      if (window.console) console.warn('get_wizard_state 失败：', err);
+    });
+  }
+
+  // 打开时直接落到第一个没完成的步骤：中途关过向导的人不用从头再点一遍
+  function firstIncompleteStep() {
+    var st = wizState().steps;
+    if (!st.risk) return 0;
+    if (!st.model) return 1;
+    if (!st.login) return 2;
+    if (!st.persona) return 3;
+    return 4;
+  }
+
+  function openWizard(auto) {
+    resetWizardCache();
+    S.wizOpen = true;
+    S.wizAuto = !!auto;
+    dom.wizardModal.hidden = false;
+    showWizardStep(firstIncompleteStep());
+    if (dom.wizardClose) dom.wizardClose.focus();
+  }
+
+  function closeWizard() {
+    S.wizOpen = false;
+    S.wizAuto = false;
+    stopWizardLoginPoll();
+    dom.wizardModal.hidden = true;
+  }
+
+  function showWizardStep(n) {
+    n = Number(n);
+    if (!isFinite(n)) n = 0;
+    n = Math.max(0, Math.min(WIZ_STEP_COUNT - 1, Math.round(n)));
+    S.wizStep = n;
+    if (n > S.wizMaxStep) S.wizMaxStep = n;
+
+    // 离开登录步骤就停轮询，别让它在后台一直打接口
+    if (n !== 2) stopWizardLoginPoll();
+    // 风控已确认过就默认勾上（下一步仍然要它处于勾选状态）
+    if (n === 0 && wizState().risk_acknowledged) dom.wizRiskAck.checked = true;
+
+    renderWizardSteps();
+    renderWizardPanes();
+    renderWizardFoot();
+
+    if (n === 1) prefillWizardModel();
+    else if (n === 2) enterWizardLogin();
+    else if (n === 3) loadWizardPersonas();
+    else if (n === 4) {
+      renderWizardSummary();
+      loadWizardState(false);
+    }
+  }
+
+  function renderWizardSteps() {
+    var st = wizState();
+    var items = dom.wizardSteps.querySelectorAll('.wiz-step');
+    for (var i = 0; i < items.length; i++) {
+      var idx = Number(items[i].getAttribute('data-wiz-step'));
+      var key = WIZ_STEP_KEYS[idx];
+      var done = key ? !!st.steps[key] : !!st.first_run_done;
+      var reachable = (idx <= S.wizMaxStep) || done;
+      var cls = 'wiz-step';
+      if (done) cls += ' done';
+      if (idx === S.wizStep) cls += ' active';
+      else if (reachable) cls += ' clickable';
+      items[i].className = cls;
+    }
+    setText(dom.wizardStepTag, '第 ' + (S.wizStep + 1) + ' / ' + WIZ_STEP_COUNT + ' 步 · ' + WIZ_STEP_NAMES[S.wizStep]);
+    renderWizardEntry();
+  }
+
+  // 仪表盘上的「重新运行向导」入口：文案随完成状态变，便于判断向导是否已完成
+  function renderWizardEntry() {
+    if (!dom.qaWizard) return;
+    var done = wizState().first_run_done;
+    dom.qaWizard.title = done
+      ? '重新运行首次使用向导（会再次弹出向导，不会清空已有配置）'
+      : '首次使用向导尚未完成，点这里可以继续';
+  }
+
+  function renderWizardPanes() {
+    var panes = dom.wizardModal.querySelectorAll('.wiz-pane');
+    for (var i = 0; i < panes.length; i++) {
+      var idx = Number(panes[i].getAttribute('data-wiz-pane'));
+      panes[i].className = (idx === S.wizStep) ? 'wiz-pane active' : 'wiz-pane';
+    }
+  }
+
+  function renderWizardFoot() {
+    var n = S.wizStep;
+    show(dom.wizardQuit, n === 0);
+    show(dom.wizardBack, n > 0);
+    show(dom.wizardSkip, n >= 1 && n <= 3);
+    show(dom.wizardNext, n < 4);
+    show(dom.wizardFinish, n === 4);
+
+    var canNext = true;
+    var hint = '';
+    if (n === 0) {
+      canNext = !!(dom.wizRiskAck && dom.wizRiskAck.checked);
+      hint = canNext ? '' : '请先勾选「我已了解」';
+    } else if (n === 1) {
+      canNext = !!S.wizModelOK;
+      hint = canNext ? '' : '先点「测试连接」测通模型，或选「稍后再说」';
+    } else if (n === 2) {
+      canNext = !!(S.app && S.app.qq);
+      hint = canNext ? '' : '尚未登录，可以选「稍后再说」先跳过';
+    }
+
+    dom.wizardNext.disabled = !canNext || S.wizBusy;
+    dom.wizardFinish.disabled = S.wizBusy;
+    setText(dom.wizardFootHint, hint);
+  }
+
+  /* ---------------- 第 1 步：风控提示 ---------------- */
+  function wizardAcknowledge() {
+    if (S.wizBusy) return;
+    if (!dom.wizRiskAck.checked) {
+      toast('请先勾选「我已了解」', 'warn');
+      return;
+    }
+    S.wizBusy = true;
+    setBusy(dom.wizardNext, true, '确认中…');
+    apiCall('acknowledge_risk').then(function (res) {
+      S.wizBusy = false;
+      setBusy(dom.wizardNext, false);
+      if (res && res.ok === false) {
+        toast(hasText(res.error) ? String(res.error) : '风控确认失败', 'err');
+        return;
+      }
+      S.wiz = normalizeWizardState(res);
+      S.wizLoaded = true;
+      showWizardStep(1);
+    }, function (err) {
+      S.wizBusy = false;
+      setBusy(dom.wizardNext, false);
+      renderWizardFoot();
+      toast('风控确认失败：' + errText(err), 'err');
+    });
+  }
+
+  /* ---------------- 第 2 步：模型配置 ---------------- */
+  function prefillWizardModel() {
+    if (S.wizModelPreloaded) return;
+    S.wizModelPreloaded = true;
+    apiCall('get_model_config').then(function (res) {
+      var cfg = normalizeModelConfig(res);
+      if (dom.wizBaseUrl.value.trim() === '') dom.wizBaseUrl.value = cfg.base_url;
+      if (dom.wizModel.value.trim() === '') dom.wizModel.value = cfg.model;
+      setText(dom.wizApiKeyHint, cfg.api_key_set
+        ? ('已保存 ' + (cfg.api_key_masked || '••••••••') + '；留空表示沿用已保存的 Key')
+        : '尚未保存 API Key；填好后点「测试连接」');
+    }, function () {
+      setText(dom.wizApiKeyHint, '读取已保存配置失败，请手动填写');
+    });
+  }
+
+  function renderWizardTest(res) {
+    var el = dom.wizTestResult;
+    if (!el) return;
+    var r = (res && typeof res === 'object') ? res : {};
+    var parts = [];
+    var lat = Number(r.latency_ms);
+    var hasLat = isFinite(lat) && lat >= 0;
+
+    if (r.ok) {
+      parts.push('✓ ' + (hasText(r.message) ? String(r.message) : '连接正常'));
+      if (hasLat) parts.push(Math.round(lat) + 'ms');
+      if (hasText(r.model)) parts.push(String(r.model));
+      setClass(el, 'test-result ok');
+    } else {
+      var msg = hasText(r.message) ? String(r.message)
+        : (hasText(r.hint) ? String(r.hint) : '连接失败');
+      parts.push('✗ ' + msg + (hasText(r.kind) ? ('（' + r.kind + '）') : ''));
+      setClass(el, 'test-result err');
+    }
+    setText(el, parts.join(' · '));
+    show(el, true);
+  }
+
+  function wizardTestModel() {
+    if (S.wizTestBusy) return;
+    var baseUrl = dom.wizBaseUrl.value.trim();
+    var model = dom.wizModel.value.trim();
+    var key = dom.wizApiKey.value.trim();
+
+    if (baseUrl === '' || model === '') {
+      S.wizModelOK = false;
+      renderWizardTest({ ok: false, kind: 'config', message: '请先填写 Base URL 与对话模型' });
+      renderWizardFoot();
+      return;
+    }
+
+    S.wizTestBusy = true;
+    setBusy(dom.wizTestBtn, true, '测试中…');
+    show(dom.wizTestResult, false);
+
+    var payload = { base_url: baseUrl, model: model };
+    if (key !== '') payload.api_key = key;   // 留空 = 沿用已保存的 Key
+
+    apiCall('test_model', payload).then(function (res) {
+      renderWizardTest(res);
+      if (!res || res.ok !== true) {
+        S.wizTestBusy = false;
+        S.wizModelOK = false;
+        setBusy(dom.wizTestBtn, false);
+        renderWizardFoot();
+        return null;
+      }
+      // 测通就顺手写进配置，否则这一步只是白测一遍
+      var patch = { base_url: baseUrl, model: model };
+      if (key !== '') patch.api_key = key;
+      return apiCall('apply_model_config', patch).then(function (res2) {
+        S.wizTestBusy = false;
+        setBusy(dom.wizTestBtn, false);
+        if (res2 && res2.ok === false) {
+          S.wizModelOK = false;
+          renderWizardTest({
+            ok: false,
+            message: hasText(res2.error) ? String(res2.error) : '配置保存失败'
+          });
+          renderWizardFoot();
+          return null;
+        }
+        S.wizModelOK = true;
+        if (dom.wizApiKey) dom.wizApiKey.value = '';
+        S.modelLoaded = false;   // 模型页下次进入重新拉，避免用旧值把刚写的覆盖掉
+        renderWizardFoot();
+        return loadWizardState(false);   // 刷新步骤指示器（steps.model）
+      });
+    }, function (err) {
+      S.wizTestBusy = false;
+      S.wizModelOK = false;
+      setBusy(dom.wizTestBtn, false);
+      renderWizardTest({ ok: false, kind: 'connection', message: errText(err) });
+      renderWizardFoot();
+    });
+  }
+
+  /* ---------------- 第 3 步：登录 QQ ---------------- */
+  function stopWizardLoginPoll() {
+    if (S.wizLoginTimer) {
+      clearInterval(S.wizLoginTimer);
+      S.wizLoginTimer = null;
+    }
+  }
+
+  function pollWizardLoginState() {
+    apiCall('get_state').then(function (res) {
+      if (res && typeof res === 'object') window.qlark.onState(res);
+    })['catch'](function () { /* 轮询失败静默，等下一次 */ });
+  }
+
+  function startWizardLoginPoll() {
+    stopWizardLoginPoll();
+    S.wizLoginTimer = setInterval(function () {
+      if (!S.wizOpen || S.wizStep !== 2) { stopWizardLoginPoll(); return; }
+      pollWizardLoginState();
+    }, WIZ_LOGIN_POLL_MS);
+  }
+
+  function enterWizardLogin() {
+    renderWizardLogin(S.app || defaultState());
+    pollWizardLoginState();
+    if (!S.wizLoginStarted && !(S.app && S.app.qq)) {
+      S.wizLoginStarted = true;
+      wizardStartLogin(true);
+    }
+    startWizardLoginPoll();
+  }
+
+  function wizardStartLogin(silent) {
+    if (S.app && S.app.qq) return;
+    dom.wizLoginStart.disabled = true;
+    apiCall('start').then(function () {
+      dom.wizLoginStart.disabled = false;
+      pollWizardLoginState();
+    }, function (err) {
+      dom.wizLoginStart.disabled = false;
+      if (!silent) toast('启动失败：' + errText(err), 'err');
+      else toast('自动启动失败：' + errText(err), 'err');
+    });
+  }
+
+  function renderWizardLogin(st) {
+    if (!S.wizOpen || S.wizStep !== 2) return;
+    var s = st || defaultState();
+    var loggedIn = !!s.qq;
+
+    setClass(dom.wizLoginDot, loggedIn ? 'dot ok lg' : (s.phase === 'error' ? 'dot err lg' : 'dot off lg'));
+    setText(dom.wizLoginPhase, loggedIn ? '已登录' : (s.phase_text || phaseInfo(s.phase)[0]));
+    setText(dom.wizLoginMeta, 'QQ：' + (s.qq ? String(s.qq) : '未登录') + ' · 阶段 ' + s.phase);
+
+    var qr = s.qrcode;
+    var url = (qr && qr.data_url) ? qr.data_url : null;
+    if (url) {
+      if (S.wizQrSrc !== url) { dom.wizQrImg.src = url; S.wizQrSrc = url; }
+      dom.wizQrImg.hidden = false;
+      dom.wizQrEmpty.hidden = true;
+    } else {
+      if (dom.wizQrImg.getAttribute('src')) dom.wizQrImg.removeAttribute('src');
+      S.wizQrSrc = null;
+      dom.wizQrImg.hidden = true;
+      dom.wizQrEmpty.hidden = false;
+    }
+
+    var kv = dom.wizLoginKv;
+    kv.textContent = '';
+    [
+      ['登录阶段', s.phase_text || phaseInfo(s.phase)[0]],
+      ['当前 QQ', s.qq ? String(s.qq) : '未登录'],
+      ['昵称', s.nickname || '—'],
+      ['OneBot 端口', s.onebot_ready ? '已就绪' : '未就绪']
+    ].forEach(function (row) {
+      kv.appendChild(mk('span', 'k', row[0]));
+      kv.appendChild(mk('span', 'v', row[1]));
+    });
+
+    show(dom.wizLoginOk, loggedIn);
+    if (loggedIn) {
+      setText(dom.wizLoginOkText, '已登录为 ' + s.qq +
+        (s.nickname ? ('（' + s.nickname + '）') : '') + '，可以进入下一步了');
+    }
+
+    if (loggedIn && !S.wizLoginDone) {
+      S.wizLoginDone = true;
+      loadWizardState(false);   // 刷新步骤指示器（steps.login）
+    } else if (!loggedIn && S.wizLoginDone) {
+      S.wizLoginDone = false;   // 又掉线了，允许再次刷新
+    }
+
+    renderWizardFoot();
+  }
+
+  /* ---------------- 第 4 步：人设 ---------------- */
+  function loadWizardPersonas() {
+    return apiCall('list_personas').then(function (res) {
+      var data = normalizePersonas(res);
+      S.wizPersonas = data.personas;
+
+      var want = S.wizPersonaUid;
+      var found = null;
+      S.wizPersonas.forEach(function (p) { if (p.uid === want) found = p; });
+      if (!found && data.default_uid !== null) {
+        S.wizPersonas.forEach(function (p) { if (p.uid === data.default_uid) found = p; });
+      }
+      if (!found) found = S.wizPersonas.length ? S.wizPersonas[0] : null;
+      S.wizPersonaUid = found ? found.uid : null;
+
+      renderWizardPersonas();
+    }, function (err) {
+      S.wizPersonas = [];
+      S.wizPersonaUid = null;
+      dom.wizPersonaList.textContent = '';
+      dom.wizPersonaList.appendChild(mk('li', 'persona-empty-row', '人设列表读取失败：' + errText(err)));
+      renderWizardPersonaEditor();
+      if (window.console) console.warn('list_personas 失败：', err);
+    });
+  }
+
+  function currentWizardPersona() {
+    var found = null;
+    S.wizPersonas.forEach(function (p) { if (p.uid === S.wizPersonaUid) found = p; });
+    return found;
+  }
+
+  function renderWizardPersonas() {
+    var list = dom.wizPersonaList;
+    list.textContent = '';
+
+    if (!S.wizPersonas.length) {
+      list.appendChild(mk('li', 'persona-empty-row', '还没有任何人设，可以稍后在「人设配置」页新建'));
+      renderWizardPersonaEditor();
+      return;
+    }
+
+    S.wizPersonas.forEach(function (p) {
+      // 复用主界面的 .persona-row 样式
+      var row = mk('li', 'persona-row' + (p.uid === S.wizPersonaUid ? ' active' : '') +
+        (p.enabled ? '' : ' disabled'));
+      row.setAttribute('data-uid', String(p.uid));
+      row.appendChild(mk('span', 'persona-slot', '人设' + p.slot));
+      row.appendChild(mk('span', 'persona-name' + (p.name ? '' : ' unnamed'), p.name || '（未命名）'));
+      row.appendChild(mk('span', 'persona-msgs', fmtNum(p.message_count) + ' 条'));
+      row.title = (p.name || '（未命名）') + '（人设' + p.slot + '）';
+      row.addEventListener('click', function () {
+        if (S.wizPersonaUid === p.uid) return;
+        S.wizPersonaUid = p.uid;
+        renderWizardPersonas();
+      });
+      list.appendChild(row);
+    });
+
+    renderWizardPersonaEditor();
+  }
+
+  function renderWizardPersonaEditor() {
+    var p = currentWizardPersona();
+    if (!p) {
+      show(dom.wizPersonaEdit, false);
+      show(dom.wizPersonaEmpty, true);
+      return;
+    }
+    show(dom.wizPersonaEmpty, false);
+    show(dom.wizPersonaEdit, true);
+    dom.wizPersonaName.value = p.name;
+    dom.wizPersonaPrompt.value = p.system_prompt;
+    setText(dom.wizPromptCount, dom.wizPersonaPrompt.value.length + ' 字');
+    setText(dom.wizPersonaHint, p.uid === S.wizPersonaUid
+      ? ('正在编辑：人设' + p.slot + (p.enabled ? '' : '（已停用）'))
+      : '');
+  }
+
+  function saveWizardPersona() {
+    var uid = S.wizPersonaUid;
+    if (uid === null || uid === undefined) return;
+    var name = dom.wizPersonaName.value.trim();
+    var prompt = dom.wizPersonaPrompt.value;
+    if (name === '') { toast('人设名称不能为空', 'warn'); dom.wizPersonaName.focus(); return; }
+    if (prompt.trim() === '') { toast('系统提示词不能为空', 'warn'); dom.wizPersonaPrompt.focus(); return; }
+
+    setBusy(dom.wizPersonaSave, true, '保存中…');
+    apiCall('update_persona', uid, { name: name, system_prompt: prompt }).then(function (res) {
+      setBusy(dom.wizPersonaSave, false);
+      if (res && res.ok === false) {
+        var e = (res.errors && typeof res.errors === 'object') ? res.errors : {};
+        var msg = hasText(e.name) ? String(e.name)
+          : (hasText(e.system_prompt) ? String(e.system_prompt)
+            : (hasText(res.error) ? String(res.error) : '保存失败'));
+        toast(msg, 'err');
+        return;
+      }
+      toast('人设已保存', 'ok');
+      loadWizardPersonas();
+      loadWizardState(false);   // 刷新步骤指示器（steps.persona）
+      renderWizardFoot();
+    }, function (err) {
+      setBusy(dom.wizPersonaSave, false);
+      toast('保存失败：' + errText(err), 'err');
+    });
+  }
+
+  /* ---------------- 第 5 步：完成 ---------------- */
+  function renderWizardSummary() {
+    var st = wizState();
+    var d = st.detail;
+    var skip = S.wizSkipped;
+    var rows = [
+      {
+        name: '风控提示',
+        ok: st.steps.risk,
+        skipped: false,
+        detail: st.steps.risk ? '已确认风控风险提示' : '尚未确认，可在第 1 步勾选'
+      },
+      {
+        name: '模型配置',
+        ok: st.steps.model,
+        skipped: !!skip.model,
+        detail: st.steps.model
+          ? ((d.base_url || '—') + (d.model ? (' · ' + d.model) : ''))
+          : '尚未配置，可在「模型配置」页填写'
+      },
+      {
+        name: '登录 QQ',
+        ok: st.steps.login,
+        skipped: !!skip.login,
+        detail: st.steps.login
+          ? ('QQ ' + (d.qq || '—') + ' · 阶段 ' + d.phase)
+          : '尚未登录，可在「登录 / 连接」里扫码'
+      },
+      {
+        name: '人设',
+        ok: st.steps.persona,
+        skipped: !!skip.persona,
+        detail: '当前共 ' + fmtNum(d.persona_count) + ' 个人设'
+      }
+    ];
+
+    var list = dom.wizSummary;
+    list.textContent = '';
+    var okCount = 0;
+    rows.forEach(function (r) {
+      var tone = r.ok ? 'ok' : (r.skipped ? 'warn' : 'bad');
+      var li = mk('li', 'wiz-sum-row');
+      var mark = mk('span', 'env-mark ' + tone);
+      mark.appendChild(iconUse(r.ok ? '#i-check' : (r.skipped ? '#i-warn' : '#i-cross')));
+      li.appendChild(mark);
+      li.appendChild(mk('span', 'wiz-sum-title', r.name));
+      li.appendChild(mk('span', 'wiz-sum-value', r.detail));
+      li.appendChild(mk('span', 'tag ' + (r.ok ? 'ok' : (r.skipped ? 'warn' : '')),
+        r.ok ? '已就绪' : (r.skipped ? '已跳过' : '未完成')));
+      list.appendChild(li);
+      if (r.ok) okCount++;
+    });
+
+    setText(dom.wizardFootHint, okCount + ' / ' + rows.length + ' 项已就绪');
+  }
+
+  function finishWizard() {
+    if (S.wizBusy) return;
+    S.wizBusy = true;
+    setBusy(dom.wizardFinish, true, '处理中…');
+    apiCall('finish_wizard').then(function (res) {
+      S.wizBusy = false;
+      setBusy(dom.wizardFinish, false);
+      if (res && res.ok === false) {
+        var msg = hasText(res.error) ? String(res.error) : '向导未完成';
+        toast(msg, 'err');
+        // 正常情况下不该发生（第 1 步已强制确认风控）；真发生了就把用户送回第 1 步
+        if (msg.indexOf('风控') !== -1) showWizardStep(0);
+        renderWizardFoot();
+        return;
+      }
+      S.wiz = normalizeWizardState(res);
+      S.wizLoaded = true;
+      renderWizardSteps();
+      closeWizard();
+      toast('向导已完成，随时可以在左侧页面修改配置', 'ok');
+    }, function (err) {
+      S.wizBusy = false;
+      setBusy(dom.wizardFinish, false);
+      renderWizardFoot();
+      toast('完成向导失败：' + errText(err), 'err');
+    });
+  }
+
+  /* ---------------- 底部按钮 / 入口 ---------------- */
+  function wizardNext() {
+    if (S.wizBusy) return;
+    if (S.wizStep === 0) { wizardAcknowledge(); return; }
+    if (S.wizStep < WIZ_STEP_COUNT - 1) showWizardStep(S.wizStep + 1);
+  }
+
+  function wizardSkip() {
+    var key = WIZ_STEP_KEYS[S.wizStep];
+    if (key) S.wizSkipped[key] = true;
+    if (S.wizStep < WIZ_STEP_COUNT - 1) showWizardStep(S.wizStep + 1);
+  }
+
+  function wizardQuitApp() {
+    if (!window.confirm('确定退出 QLark？')) return;
+    dom.wizardQuit.disabled = true;
+    apiCall('quit_app').then(function (res) {
+      dom.wizardQuit.disabled = false;
+      if (res && res.ok === false) {
+        toast(hasText(res.message) ? String(res.message) : '退出失败', 'err');
+      }
+    }, function (err) {
+      dom.wizardQuit.disabled = false;
+      toast('退出失败：' + errText(err), 'err');
+    });
+  }
+
+  // 仪表盘入口：重新运行向导（restart_wizard 会把 first_run_done 置回 false）
+  function restartWizard() {
+    if (dom.qaWizard.disabled) return;
+    dom.qaWizard.disabled = true;
+    apiCall('restart_wizard').then(function (res) {
+      dom.qaWizard.disabled = false;
+      if (res && res.ok === false) {
+        toast('重新运行向导失败：' + (hasText(res.error) ? String(res.error) : '未知原因'), 'err');
+        return;
+      }
+      S.wiz = normalizeWizardState(res);
+      S.wizLoaded = true;
+      if (S.modalOpen) closeModal();
+      openWizard(false);
+      renderWizardSteps();
+      toast('已重新运行首启向导', 'ok');
+    }, function (err) {
+      dom.qaWizard.disabled = false;
+      toast('重新运行向导失败：' + errText(err), 'err');
+    });
+  }
+
   /* ---------------- 模态 ---------------- */
   function openModal() {
     S.modalOpen = true;
@@ -1720,6 +3149,11 @@
       renderAll();
       // 登录状态变化时刷新账号列表（只在模型页需要）
       if (S.page === 'model' && S.accounts !== null && S.app.qq !== prevQQ) loadAccounts();
+      // 记忆页：状态推送（含切换账号）时刷新会话列表。
+      // 只刷列表，不动右栏 —— 否则会把正在编辑的文本框整个冲掉。
+      if (S.page === 'memory') loadMemoryList(true);
+      // 向导停在第 3 步时，二维码 / 登录状态跟着状态推送走
+      if (S.wizOpen) renderWizardLogin(S.app);
     },
     onLog: function (lines) {
       pushLines(lines);
@@ -1800,6 +3234,226 @@
       return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
     })();
 
+    /* ---------- M4：记忆预览数据 ---------- */
+    var NOW = Math.floor(Date.now() / 1000);
+
+    function mkMsg(id, role, content, hasImage, tokens, createdAt, summarized) {
+      return {
+        id: id,
+        role: role,
+        content: content,
+        has_image: !!hasImage,
+        tokens: tokens,
+        created_at: createdAt,
+        summarized: !!summarized
+      };
+    }
+
+    // 会话 C 的长对话：3 轮已压缩 + 20 轮未压缩，
+    // 这样把 W 保持默认 20 时点「立即压缩」就能真的压出摘要。
+    var C_USER = [
+      '帮我看看这个报错：ModuleNotFoundError: No module named requests',
+      '装好了，现在又说 sqlite3.OperationalError: database is locked',
+      '为什么会锁库？我明明只有一个进程在读',
+      '那把 WAL 打开会不会好一点',
+      'WAL 开了，读的时候确实不卡了',
+      '那 checkpoint 什么时候做比较合适',
+      '嗯，我改成每 200 页自动 checkpoint 了',
+      '顺便问下，记忆轮数改成 12 会怎样',
+      '上下文预算 24000 字大概能放多少条消息',
+      '压缩用的模型能不能单独指定',
+      '总结会不会把重要的原话弄丢',
+      '行，那我先按默认来'
+    ];
+    var C_BOT = [
+      '看着像没装依赖，先 pip install requests 试试咕',
+      'database is locked 一般是写事务没提交，或者两个连接在抢写锁',
+      '读也会被写锁挡住，默认的 rollback journal 模式就是这样',
+      '会好一些咕，WAL 下读不阻塞写；改完记得让连接都重开一次',
+      '对，WAL 就是干这个的咕',
+      '默认 WAL 到 1000 页会自动 checkpoint，你这个量不用手动管',
+      '稳咕',
+      '轮数既是每次请求带的原文轮数，也是触发压缩的轮数，12 会压得更勤',
+      '按中文算大概一万字上下，超出会从最早的原文开始丢，摘要一直留着',
+      '记忆面板里可以单独填总结模型，留空就用对话模型咕',
+      '摘要是模型写的，细节会丢一些；所以最近的 W 轮永远保留原文',
+      '好，有问题再喊我咕'
+    ];
+
+    function buildMockMemories() {
+      var a = {
+        memory_key: 'group:985761234:p1',
+        session_id: 'group:985761234',
+        session_type: 'group',
+        session_ref: '985761234',
+        persona_uid: 1,
+        persona_name: '米蛋',
+        updated_at: NOW - 95,
+        summary: '群里主要在约周末联机：定在周六晚 8 点开黑，玩《分手厨房》。' +
+          '期间有人问了天气指令，已说明只能查未来三天。整体气氛轻松，用户偏好短句回复。',
+        summary_updated_at: NOW - 540,
+        summary_pending: false,
+        detail: [
+          mkMsg(1001, 'user', '咕，周六晚上有空吗？', false, 14, NOW - 4200, true),
+          mkMsg(1002, 'assistant', '有空的咕，周六晚上想干嘛？', false, 13, NOW - 4180, true),
+          mkMsg(1003, 'user', '开黑啊，把 @小林 也叫上', false, 16, NOW - 1400, false),
+          mkMsg(1004, 'assistant', '好，那定周六晚 8 点，到时候我提醒你们咕', false, 21, NOW - 1380, false),
+          mkMsg(1005, 'user', '顺便看看这周末天气怎么样', true, 96, NOW - 300, false),
+          mkMsg(1006, 'assistant', '我这边只能看未来三天：周六多云 18~25℃，晚上开黑刚好咕', false, 34, NOW - 95, false)
+        ]
+      };
+
+      var b = {
+        memory_key: 'private:2157649443:p2',
+        session_id: 'private:2157649443',
+        session_type: 'private',
+        session_ref: '2157649443',
+        persona_uid: 2,
+        persona_name: '严谨助手',
+        updated_at: NOW - 640,
+        summary: '用户在准备一次技术面试，重点关注 Python 并发与数据库索引。' +
+          '已约定：回答先给结论再给依据，代码片段必须完整可运行。',
+        summary_updated_at: NOW - 7200,
+        // 上次压缩失败：摘要还是旧的，原文一条没动，等下一轮自动重试
+        summary_pending: true,
+        detail: [
+          mkMsg(2001, 'user', '帮我理一下 GIL 对多线程的影响', false, 22, NOW - 9000, true),
+          mkMsg(2002, 'assistant', '结论：CPython 的 GIL 让同一时刻只有一个线程执行字节码，' +
+            'CPU 密集任务用多进程，IO 密集任务多线程仍然有效。依据：……', false, 88, NOW - 8980, true),
+          mkMsg(2003, 'user', '那 asyncio 和线程池怎么选', false, 18, NOW - 3000, false),
+          mkMsg(2004, 'assistant', '看瓶颈：等网络 / 等磁盘用 asyncio；要跑阻塞库或 CPU 活就用线程池 / 进程池。',
+            false, 46, NOW - 2980, false),
+          mkMsg(2005, 'user', '这张执行计划里 type=ALL 是什么意思', true, 128, NOW - 1500, false),
+          mkMsg(2006, 'assistant', 'type=ALL 表示全表扫描，没走索引；先看 WHERE 列有没有索引，再看是否命中最左前缀。',
+            false, 52, NOW - 640, false)
+        ]
+      };
+
+      // 会话 C：23 轮（前 3 轮已压缩，剩 20 轮未压缩 = 正好够 W=20 触发一次压缩）
+      var cDetail = [];
+      var base = NOW - 86400;
+      for (var i = 0; i < 23; i++) {
+        var t = base + i * 900;
+        var done = i < 3;
+        cDetail.push(mkMsg(3001 + i * 2, 'user', C_USER[i % C_USER.length], false, 18 + (i % 5) * 3, t, done));
+        cDetail.push(mkMsg(3002 + i * 2, 'assistant', C_BOT[i % C_BOT.length], false, 30 + (i % 7) * 4, t + 6, done));
+      }
+
+      var c = {
+        memory_key: 'group:778899001:p1',
+        session_id: 'group:778899001',
+        session_type: 'group',
+        session_ref: '778899001',
+        persona_uid: 1,
+        persona_name: '米蛋',
+        updated_at: NOW - 7200,
+        summary: '',
+        summary_updated_at: 0,
+        summary_pending: false,
+        detail: cDetail
+      };
+
+      return [a, b, c];
+    }
+
+    function findMemory(key) {
+      var target = String(key === undefined || key === null ? '' : key);
+      var found = null;
+      state.memories.forEach(function (m) { if (m.memory_key === target) found = m; });
+      return found;
+    }
+
+    function findMessageById(id) {
+      var target = Number(id);
+      var found = null;
+      state.memories.forEach(function (mem) {
+        mem.detail.forEach(function (msg) { if (msg.id === target) found = { mem: mem, msg: msg }; });
+      });
+      return found;
+    }
+
+    function countSummarized(mem) {
+      var n = 0;
+      mem.detail.forEach(function (x) { if (x.summarized) n++; });
+      return n;
+    }
+
+    // 与 store.unsummarized_rounds 一致：一轮 = 一条 user + 一条 assistant，取较小值
+    function unsummarizedRounds(mem) {
+      var u = 0, a = 0;
+      mem.detail.forEach(function (x) {
+        if (x.summarized) return;
+        if (x.role === 'user') u++;
+        else a++;
+      });
+      return Math.min(u, a);
+    }
+
+    function memoryOverview() {
+      var sessions = 0, messages = 0, summaries = 0, pending = 0, contentBytes = 0;
+      state.memories.forEach(function (m) {
+        sessions++;
+        messages += m.detail.length;
+        if (m.summary) { summaries++; contentBytes += m.summary.length; }
+        if (m.summary_pending) pending++;
+        m.detail.forEach(function (x) { contentBytes += String(x.content || '').length; });
+      });
+      return {
+        sessions: sessions,
+        messages: messages,
+        summaries: summaries,
+        pending: pending,
+        content_bytes: contentBytes,
+        db_bytes: 196608 + contentBytes * 3
+      };
+    }
+
+    // 预览模式的「模型输出」：从被压缩的原文里挑几句拼成不超过 300 字的摘要
+    function buildMockSummary(rows, oldSummary) {
+      var said = [];
+      rows.forEach(function (x) {
+        if (x.role !== 'user' || said.length >= 3) return;
+        said.push(clip(x.content, 14));
+      });
+      var body = '（预览摘要）此前聊到：' + said.join('；') + '。共合并 ' +
+        rows.length + ' 条原文，整体语气轻松，用户偏好简短直接的回答。';
+      var text = oldSummary ? (oldSummary + ' ' + body) : body;
+      return text.length > state.memory_config.summary_max_chars
+        ? (text.slice(0, state.memory_config.summary_max_chars - 1) + '…')
+        : text;
+    }
+
+    function memoryConfigSnapshot() {
+      var cfg = state.memory_config;
+      return {
+        memory_rounds: cfg.memory_rounds,
+        auto_summary: cfg.auto_summary,
+        summary_model: cfg.summary_model,
+        max_context_chars: cfg.max_context_chars,
+        summary_runs: cfg.summary_runs,
+        summary_max_chars: cfg.summary_max_chars,
+        overview: memoryOverview()
+      };
+    }
+
+    function memoryListPayload() {
+      return state.memories.map(function (m) {
+        return {
+          memory_key: m.memory_key,
+          session_id: m.session_id,
+          session_type: m.session_type,
+          session_ref: m.session_ref,
+          persona_uid: m.persona_uid,
+          persona_name: m.persona_name,
+          messages: m.detail.length,
+          compressed: countSummarized(m),
+          summary_chars: m.summary ? m.summary.length : 0,
+          summary_pending: !!m.summary_pending,
+          updated_at: m.updated_at
+        };
+      });
+    }
+
     var state = {
       phase: 'waiting_scan',
       phase_text: '等待扫码登录',
@@ -1871,6 +3525,9 @@
         reply_quote_group: true,
         max_reply_chars: 500,
         error_notice_private: true,
+        // M6：风控
+        rate_limit_per_minute: 12,
+        blocked_words: ['加群', '代刷', '免费领取'],
         restart_required: false
       },
 
@@ -1906,7 +3563,24 @@
         }
       ],
       persona_default_uid: 1,
-      persona_permission: { whitelist_only: true, whitelist: ['2157649443', '1000123456'] }
+      persona_permission: { whitelist_only: true, whitelist: ['2157649443', '1000123456'] },
+
+      /* M4：记忆配置 + 记忆（预览数据） */
+      memory_config: {
+        memory_rounds: 20,
+        auto_summary: true,
+        summary_model: '',
+        max_context_chars: 24000,
+        summary_runs: 3,
+        summary_max_chars: 300
+      },
+      memories: buildMockMemories(),
+
+      /* M6：首启向导（预览数据从「未完成」开始，方便直接看到向导） */
+      wizard: {
+        first_run_done: false,
+        risk_acknowledged: false
+      }
     };
 
     var buffer = [];
@@ -1973,6 +3647,45 @@
       var s = String(text);
       if (s.length <= head + tail) return '••••••••';
       return s.slice(0, head) + '••••••••' + s.slice(-tail);
+    }
+
+    /* ---------- M6：首启向导（预览数据） ---------- */
+    // 有名字也有提示词的人设才算「配好了」
+    function wizardPersonaCount() {
+      var n = 0;
+      state.personas.forEach(function (p) {
+        if (String(p.name || '').trim() !== '' && String(p.system_prompt || '').trim() !== '') n++;
+      });
+      return n;
+    }
+
+    // 预览模式下 steps 由真实状态推导，这样确认风控 / 测通模型 / 登录后指示器会真的变
+    function wizardSnapshot() {
+      var cfg = state.model_config;
+      return {
+        first_run_done: !!state.wizard.first_run_done,
+        risk_acknowledged: !!state.wizard.risk_acknowledged,
+        steps: {
+          risk: !!state.wizard.risk_acknowledged,
+          model: (String(cfg.base_url || '').trim() !== '' &&
+            String(cfg.model || '').trim() !== '' && !!cfg.api_key_set),
+          login: !!state.qq,
+          persona: wizardPersonaCount() > 0
+        },
+        detail: {
+          phase: state.phase,
+          qq: state.qq,
+          model: cfg.model || '',
+          base_url: cfg.base_url || '',
+          persona_count: wizardPersonaCount()
+        }
+      };
+    }
+
+    function wizardOk() {
+      var snap = wizardSnapshot();
+      snap.ok = true;
+      return snap;
     }
 
     var api = {
@@ -2130,6 +3843,16 @@
           if (!isFinite(n) || n < row[1] || n > row[2]) errors[row[0]] = row[3];
         });
 
+        // M6：每分钟回复上限必须是 0 – 600 的整数
+        if (p.rate_limit_per_minute !== undefined && p.rate_limit_per_minute !== null) {
+          var rl = Number(p.rate_limit_per_minute);
+          if (!isFinite(rl) || Math.floor(rl) !== rl) {
+            errors.rate_limit_per_minute = '每分钟回复上限必须是整数';
+          } else if (rl < 0 || rl > 600) {
+            errors.rate_limit_per_minute = '每分钟回复上限需在 0 – 600 之间';
+          }
+        }
+
         if (Object.keys(errors).length) {
           return delay(220).then(function () { return { ok: false, errors: errors }; });
         }
@@ -2150,6 +3873,11 @@
         if (p.reply_quote_group !== undefined) cfg.reply_quote_group = !!p.reply_quote_group;
         if (p.error_notice_private !== undefined) cfg.error_notice_private = !!p.error_notice_private;
         if (p.auto_summary !== undefined) cfg.auto_summary = !!p.auto_summary;
+        // M6：风控（blocked_words 允许数组，也容忍整段换行文本）
+        if (p.rate_limit_per_minute !== undefined && p.rate_limit_per_minute !== null) {
+          cfg.rate_limit_per_minute = Number(p.rate_limit_per_minute);
+        }
+        if (p.blocked_words !== undefined) cfg.blocked_words = normalizeWordList(p.blocked_words);
         cfg.restart_required = false;
 
         emit(['info', 'QLark', '模型配置已更新（预览数据）']);
@@ -2370,6 +4098,183 @@
         emit(['warn', 'QLark', '已清空人设' + p.slot + ' 的全部记忆（' + n + ' 条，预览数据）']);
         return delay(260).then(function () { return { ok: true, deleted_messages: n }; });
       },
+
+      /* ================= M4：记忆 ================= */
+      get_memory_config: function () {
+        return Promise.resolve(memoryConfigSnapshot());
+      },
+      apply_memory_config: function (patch) {
+        var p = (patch && typeof patch === 'object') ? patch : {};
+        var cfg = state.memory_config;
+        var errors = {};
+
+        function intField(key, label, low, high) {
+          if (p[key] === undefined) return;
+          if (p[key] === null || String(p[key]).trim() === '') {
+            errors[key] = label + '不能为空';
+            return;
+          }
+          var n = Number(p[key]);
+          if (!isFinite(n) || Math.floor(n) !== n) errors[key] = label + '必须是整数';
+          else if (n < low || n > high) errors[key] = label + '必须在 ' + low + '~' + high + ' 之间';
+        }
+        intField('memory_rounds', '记忆轮数', 1, 200);
+        intField('max_context_chars', '上下文预算', 2000, 200000);
+
+        if (Object.keys(errors).length) {
+          return delay(220).then(function () { return { ok: false, errors: errors }; });
+        }
+
+        if (p.memory_rounds !== undefined) cfg.memory_rounds = Number(p.memory_rounds);
+        if (p.auto_summary !== undefined) cfg.auto_summary = !!p.auto_summary;
+        if (p.summary_model !== undefined) cfg.summary_model = String(p.summary_model || '').trim();
+        if (p.max_context_chars !== undefined) cfg.max_context_chars = Number(p.max_context_chars);
+
+        emit(['info', 'QLark', '已应用记忆配置：轮数 ' + cfg.memory_rounds +
+          '、自动总结 ' + (cfg.auto_summary ? '开' : '关') + '、上下文预算 ' +
+          cfg.max_context_chars + ' 字（预览数据）']);
+        return delay(240).then(function () {
+          var snap = memoryConfigSnapshot();
+          snap.ok = true;
+          return snap;
+        });
+      },
+      list_memories: function () {
+        return Promise.resolve({
+          ok: true,
+          memories: memoryListPayload(),
+          overview: memoryOverview()
+        });
+      },
+      get_memory: function (key) {
+        var mem = findMemory(key);
+        if (!mem) return delay(160).then(function () { return { ok: false, error: '记忆不存在：' + key }; });
+        return Promise.resolve({
+          ok: true,
+          memory_key: mem.memory_key,
+          summary: mem.summary || '',
+          summary_pending: !!mem.summary_pending,
+          summary_updated_at: mem.summary_updated_at || 0,
+          messages: JSON.parse(JSON.stringify(mem.detail))
+        });
+      },
+      update_memory_message: function (id, content) {
+        var text = String(content === undefined || content === null ? '' : content);
+        if (!text.trim()) return Promise.resolve({ ok: false, error: '内容不能为空' });
+        var target = findMessageById(id);
+        if (!target) return Promise.resolve({ ok: false, error: '这条记忆不存在（可能已被删除）' });
+        target.msg.content = text;
+        target.mem.updated_at = Math.floor(Date.now() / 1000);
+        emit(['info', 'QLark', '已修改记忆 #' + target.msg.id + '（预览数据）']);
+        return delay(180).then(function () {
+          return { ok: true, id: target.msg.id, content: text };
+        });
+      },
+      delete_memory_message: function (id) {
+        var target = findMessageById(id);
+        if (!target) return Promise.resolve({ ok: false, error: '这条记忆不存在（可能已被删除）' });
+        var msg = target.msg;
+        target.mem.detail = target.mem.detail.filter(function (x) { return x !== msg; });
+        target.mem.updated_at = Math.floor(Date.now() / 1000);
+        emit(['warn', 'QLark', '已删除记忆 #' + msg.id + '（预览数据）']);
+        return delay(180).then(function () { return { ok: true }; });
+      },
+      delete_memory_summary: function (key) {
+        var mem = findMemory(key);
+        if (!mem) return Promise.resolve({ ok: false, error: '记忆不存在：' + key });
+        if (!mem.summary) return Promise.resolve({ ok: false, error: '这个会话还没有总结' });
+        mem.summary = '';
+        mem.summary_pending = false;
+        mem.summary_updated_at = 0;
+        // 与真实后端一致：原文的 summarized 必须复位，否则这些内容既不在总结里、
+        // 又被当成已压缩，等于永久消失
+        mem.detail.forEach(function (x) { x.summarized = false; });
+        emit(['warn', 'QLark', '已删除长期记忆摘要：' + key + '（原文已恢复为未压缩，预览数据）']);
+        return delay(220).then(function () { return { ok: true }; });
+      },
+      clear_memory: function (key) {
+        var mem = findMemory(key);
+        if (!mem) return Promise.resolve({ ok: false, error: '记忆不存在：' + key });
+        var n = mem.detail.length;
+        mem.detail = [];
+        mem.summary = '';
+        mem.summary_pending = false;
+        mem.summary_updated_at = 0;
+        mem.updated_at = Math.floor(Date.now() / 1000);
+        emit(['warn', 'QLark', '已清空记忆：' + key + '（' + n + ' 条原文 + 总结，预览数据）']);
+        return delay(240).then(function () { return { ok: true, deleted_messages: n }; });
+      },
+      summarize_memory_now: function (key) {
+        var mem = findMemory(key);
+        if (!mem) {
+          return delay(150).then(function () {
+            return { ok: false, status: 'failed', rounds: 0, chars: 0, message: '记忆不存在：' + key };
+          });
+        }
+        // 与后端一致：手动压缩绕过「自动总结」开关，但仍然受 W 轮门槛约束
+        var win = Math.max(1, Number(state.memory_config.memory_rounds) || 20);
+        var rounds = unsummarizedRounds(mem);
+
+        if (rounds < win) {
+          return delay(260).then(function () {
+            return {
+              ok: false, status: 'not_enough', rounds: rounds, chars: 0,
+              message: '未压缩原文不足 ' + win + ' 轮，暂时无需压缩'
+            };
+          });
+        }
+
+        var rows = mem.detail.filter(function (x) { return !x.summarized; }).slice(0, win * 2);
+        if (!rows.length) {
+          return delay(200).then(function () {
+            return {
+              ok: false, status: 'not_enough', rounds: rounds, chars: 0,
+              message: '没有可压缩的原文'
+            };
+          });
+        }
+
+        var text = buildMockSummary(rows, mem.summary);
+        rows.forEach(function (x) { x.summarized = true; });
+        mem.summary = text;
+        mem.summary_pending = false;
+        mem.summary_updated_at = Math.floor(Date.now() / 1000);
+        mem.updated_at = mem.summary_updated_at;
+        state.memory_config.summary_runs += 1;
+
+        emit(['info', 'QLark', '记忆已压缩：合并 ' + win + ' 轮 → ' + text.length + ' 字（预览数据）']);
+        return delay(620).then(function () {
+          return {
+            ok: true, status: 'ok', rounds: win, chars: text.length,
+            message: '已压缩 ' + win + ' 轮 → ' + text.length + ' 字'
+          };
+        });
+      },
+      /* ================= M6：首启向导 ================= */
+      get_wizard_state: function () {
+        return Promise.resolve(wizardSnapshot());
+      },
+      acknowledge_risk: function () {
+        state.wizard.risk_acknowledged = true;
+        emit(['warn', 'QLark', '用户已确认风控提示（预览数据）']);
+        return delay(220).then(wizardOk);
+      },
+      finish_wizard: function () {
+        if (!state.wizard.risk_acknowledged) {
+          return delay(200).then(function () {
+            return { ok: false, error: '请先阅读并确认风控提示' };
+          });
+        }
+        state.wizard.first_run_done = true;
+        emit(['info', 'QLark', '首次使用向导已完成（预览数据）']);
+        return delay(240).then(wizardOk);
+      },
+      restart_wizard: function () {
+        state.wizard.first_run_done = false;
+        emit(['info', 'QLark', '重新运行首次使用向导（预览数据）']);
+        return delay(200).then(wizardOk);
+      },
+
       _deliver: deliver,
       _tick: tick,
       _countTick: function () {
@@ -2444,12 +4349,30 @@
     S.personas = [];
     S.personaUid = null;
     S.perm = null;
+    S.memCfg = null;
+    S.memCfgLoaded = false;
+    S.memRuns = null;
+    S.memOverview = null;
+    S.memories = [];
+    S.memKey = null;
+    S.memDetail = null;
+    S.memDetailKey = null;
+    S.memEditingId = null;
+    S.memEditBusy = false;
+    // 向导也可能带着 mock 状态（首启自动弹窗），必须关掉重来
+    S.wiz = null;
+    S.wizLoaded = false;
+    if (S.wizOpen) closeWizard();
+    resetWizardCache();
+    loadWizardState(true);
     if (S.page === 'model') {
       loadModelConfig();
       loadAccounts();
     } else if (S.page === 'persona') {
       loadPersonas();
       loadPersonaPermission();
+    } else if (S.page === 'memory') {
+      refreshMemoryPage();
     }
 
     apiCall('get_state').then(function (res) {
@@ -2460,7 +4383,6 @@
       toast('已连接 Python 后端', 'ok');
     });
   }
-
   function watchForBackend() {
     if (realApi()) { switchToReal(); return; }
     window.addEventListener('pywebviewready', function () {
@@ -2496,7 +4418,10 @@
       if (ev.target === dom.loginModal) closeModal();
     });
     document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && S.modalOpen) closeModal();
+      if (ev.key !== 'Escape') return;
+      // 向导盖在最上层，优先关向导
+      if (S.wizOpen) closeWizard();
+      else if (S.modalOpen) closeModal();
     });
 
     dom.btnStart.addEventListener('click', function () { runApi('start'); });
@@ -2600,6 +4525,72 @@
     dom.permQqInput.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter') { ev.preventDefault(); addPerm(); }
     });
+
+    /* ----- M4：记忆面板 ----- */
+    dom.btnMemApply.addEventListener('click', applyMemoryConfig);
+    dom.btnMemRefresh.addEventListener('click', function () { refreshMemoryPage(); });
+    dom.btnMemSummarize.addEventListener('click', summarizeNow);
+    dom.btnMemDeleteSummary.addEventListener('click', deleteMemorySummary);
+    dom.btnMemClear.addEventListener('click', clearMemory);
+    // 参数输入框一改就清掉上次的标红，和模型页保持一致
+    [dom.memRounds, dom.memSummaryModel, dom.memMaxContext].forEach(function (el) {
+      if (el) el.addEventListener('input', function () { clearFieldErrors(MEMORY_FIELDS); });
+    });
+    if (dom.memAutoSummary) {
+      dom.memAutoSummary.addEventListener('change', function () { clearFieldErrors(MEMORY_FIELDS); });
+    }
+    if (dom.memRounds) {
+      dom.memRounds.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); applyMemoryConfig(); }
+      });
+    }
+    if (dom.memMaxContext) {
+      dom.memMaxContext.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); applyMemoryConfig(); }
+      });
+    }
+
+    /* ----- M6：风控设置（对话行为） ----- */
+    if (dom.bBlockedWords) {
+      dom.bBlockedWords.addEventListener('input', function () {
+        renderBlockedWordsCount();
+        clearFieldErrors(MODEL_FIELDS);
+      });
+    }
+    if (dom.bRateLimit) {
+      dom.bRateLimit.addEventListener('input', function () { clearFieldErrors(MODEL_FIELDS); });
+    }
+
+    /* ----- M6：首启向导 ----- */
+    dom.wizardClose.addEventListener('click', closeWizard);
+    dom.wizardModal.addEventListener('click', function (ev) {
+      if (ev.target === dom.wizardModal) closeWizard();   // 点遮罩也能关
+    });
+    dom.wizardNext.addEventListener('click', wizardNext);
+    dom.wizardBack.addEventListener('click', function () {
+      if (S.wizStep > 0) showWizardStep(S.wizStep - 1);
+    });
+    dom.wizardSkip.addEventListener('click', wizardSkip);
+    dom.wizardFinish.addEventListener('click', finishWizard);
+    dom.wizardQuit.addEventListener('click', wizardQuitApp);
+    dom.wizRiskAck.addEventListener('change', renderWizardFoot);
+    dom.wizTestBtn.addEventListener('click', wizardTestModel);
+    dom.wizLoginStart.addEventListener('click', function () {
+      S.wizLoginStarted = true;
+      wizardStartLogin(false);
+    });
+    dom.wizPersonaSave.addEventListener('click', saveWizardPersona);
+    dom.wizPersonaPrompt.addEventListener('input', function () {
+      setText(dom.wizPromptCount, dom.wizPersonaPrompt.value.length + ' 字');
+    });
+    dom.wizardSteps.addEventListener('click', function (ev) {
+      var li = ev.target;
+      while (li && li !== dom.wizardSteps && !li.getAttribute('data-wiz-step')) li = li.parentNode;
+      if (!li || li === dom.wizardSteps) return;
+      if (!li.className || li.className.indexOf('clickable') === -1) return;
+      showWizardStep(Number(li.getAttribute('data-wiz-step')));
+    });
+    dom.qaWizard.addEventListener('click', restartWizard);
   }
 
   /* ---------------- 启动 ---------------- */
@@ -2626,6 +4617,9 @@
       loadLogsOnce().then(function () { startTimers(); });
       watchForBackend();
     }
+
+    // 首次运行（first_run_done=false）自动弹出向导
+    loadWizardState(true);
   }
 
   if (document.readyState === 'loading') {

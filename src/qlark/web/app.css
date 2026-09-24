@@ -1414,6 +1414,336 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
 .chips-empty { font-size: 12px; color: var(--text-faint); align-self: center; }
 .perm-hint { padding-top: 6px; }
 
+/* ============================================================
+   M4：记忆面板
+   ============================================================ */
+
+.mem-config-panel { margin-top: 0; }
+
+/* ---------- 容量提示（一行） ---------- */
+.mem-capacity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 6px;
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.mem-cap {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.mem-cap-label { white-space: nowrap; }
+.mem-cap-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: 999px;
+  padding: 2px 11px;
+}
+.mem-pending[hidden] { display: none; }
+
+/* ---------- 左右布局 ---------- */
+.mem-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.mem-list-panel,
+.mem-detail-panel {
+  padding: 14px 16px 12px;
+  min-width: 0;
+}
+
+/* ---------- 左：会话列表 ---------- */
+.mem-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+.mem-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 0.14s ease, border-color 0.14s ease;
+}
+.mem-row:hover { background: var(--bg-elev-2); }
+.mem-row.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.mem-row.active .mem-kind { color: var(--accent); }
+
+.mem-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mem-kind {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.mem-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.mem-row-mid {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.mem-persona {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mem-row-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 1px;
+}
+.mem-flag { font-size: 10.5px; padding: 1px 7px; }
+
+.mem-empty-row {
+  padding: 16px 4px;
+  color: var(--text-faint);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+/* ---------- 右：详情 ---------- */
+.mem-placeholder {
+  padding: 44px 10px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* 摘要区 */
+.mem-summary-box {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-2);
+  overflow: hidden;
+}
+
+.mem-summary-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.mem-summary-title { font-size: 13.5px; }
+
+.mem-summary-body {
+  padding: 12px 13px;
+  background: var(--bg-sunken);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.mem-summary-body.empty { color: var(--text-faint); }
+.mem-summary-body.pending {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.mem-summary-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 13px;
+  border-top: 1px solid var(--border);
+}
+
+/* 原文区 */
+.mem-msgs-box {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.mem-msgs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.mem-msgs-title { font-size: 13.5px; }
+
+.mem-msgs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 620px;
+  overflow-y: auto;
+}
+
+.mem-msg {
+  padding: 10px 13px;
+  border-bottom: 1px dashed var(--border);
+  min-width: 0;
+}
+.mem-msg:last-child { border-bottom: 0; }
+.mem-msg.compressed { background: var(--bg-sunken); background: color-mix(in srgb, var(--bg-sunken) 60%, transparent); }
+.mem-msg.editing { background: var(--accent-soft); }
+
+.mem-msg-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mem-role {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 5px;
+  padding: 0 7px;
+  line-height: 17px;
+}
+.mem-role.user { color: var(--accent); background: var(--accent-soft); }
+.mem-role.assistant { color: var(--napcat); background: var(--napcat-soft); }
+
+.mem-msg-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.mem-msg-img {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.mem-msg-tokens {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mem-msg-body {
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.mem-msg-body.empty { color: var(--text-faint); font-style: italic; }
+.mem-msg.compressed .mem-msg-body { color: var(--text-dim); }
+
+.mem-act { flex: 0 0 auto; }
+.mem-act.danger-text { color: var(--err); }
+.mem-act.danger-text:hover { border-color: var(--err); background: var(--err-soft); color: var(--err); }
+
+.mem-edit-textarea {
+  margin-top: 6px;
+  min-height: 74px;
+  max-height: 260px;
+  font-size: 12.5px;
+}
+
+.mem-edit-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mem-msg-empty {
+  padding: 24px 13px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+.mem-danger-foot { margin-top: 14px; }
+
 /* ---------- 高 DPI / 窄窗口适配 ---------- */
 @media (max-width: 1000px) {
   .app { grid-template-columns: 168px minmax(0, 1fr); }
@@ -1421,6 +1751,9 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
   .qr-side { flex-basis: 100%; }
   .persona-layout { grid-template-columns: minmax(0, 1fr); }
   .persona-list { max-height: 260px; }
+  .mem-layout { grid-template-columns: minmax(0, 1fr); }
+  .mem-list { max-height: 280px; }
+  .mem-msgs { max-height: 420px; }
 }
 
 @media (max-width: 780px) {
@@ -1430,4 +1763,204 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
   .brand { justify-content: center; padding: 4px 0 14px; }
   .page { padding: 16px 14px 26px; }
   .topbar { padding: 12px 14px; }
+}
+
+/* ============================================================
+   M6：风控设置（模型配置页「对话行为」）+ 首启向导
+   ============================================================ */
+
+/* rows 很少的 textarea：base 里的 min-height:200px 会把它撑成十几行高。
+   注意：不能靠附加 class —— renderFieldErrors 的 markBad() 会把 className
+   重置成 "textarea"/"input"，所以这里用 id 选择器。 */
+#bBlockedWords { min-height: 104px; }
+
+/* ---------- 向导：全屏模态 ---------- */
+.wizard-backdrop { padding: 20px; }
+
+.wizard-modal {
+  width: min(1120px, 100%);
+  height: calc(100vh - 40px);
+  max-height: calc(100vh - 40px);
+}
+
+/* ---------- 向导：步骤指示器 ---------- */
+.wiz-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 11px 18px;
+  list-style: none;
+  background: var(--bg-elev-2);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  overflow-x: auto;
+}
+
+.wiz-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.wiz-step.clickable { cursor: pointer; }
+.wiz-step.clickable:hover { background: var(--bg-sunken); color: var(--text); }
+.wiz-step.done { color: var(--ok); }
+.wiz-step.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  font-weight: 600;
+}
+
+.wiz-step-mark {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wiz-step.done .wiz-step-mark {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+}
+.wiz-step.active .wiz-step-mark {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.wiz-step-mark .icon { display: none; }
+.wiz-step.done .wiz-step-mark .icon { display: block; }
+.wiz-step.done .wiz-step-num { display: none; }
+
+.wiz-sep { flex: 0 0 auto; width: 12px; height: 1px; background: var(--border-strong); }
+
+/* ---------- 向导：内容区 ---------- */
+.wizard-body { gap: 12px; }
+
+.wiz-pane { display: none; flex-direction: column; gap: 14px; }
+/* 内容一律从顶部排：每一步的高度不一样，居中会让内容在切步时上下跳 */
+.wiz-pane.active { display: flex; }
+
+.wiz-lead { font-size: 13px; color: var(--text-dim); line-height: 1.75; }
+
+.wiz-alert { align-items: flex-start; }
+.wiz-alert-main { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.wiz-alert-title { font-size: 13.5px; line-height: 1.6; }
+.wiz-risks {
+  margin: 0;
+  padding-left: 19px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.wiz-ack {
+  padding: 11px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.wiz-form { padding-top: 0; }
+.wiz-form .form-grid { padding-top: 0; }
+
+.wiz-test-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.alert.ok {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border: 1px solid var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  align-items: center;
+}
+
+/* ---------- 向导：人设步骤 ---------- */
+.wiz-persona-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* 复用 .persona-row / .persona-slot / .persona-name / .persona-msgs，只收窄列表高度 */
+.wiz-persona-list { margin-top: 0; max-height: 320px; }
+
+.wiz-persona-edit { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+#wizPersonaPrompt { min-height: 150px; }
+
+.wiz-persona-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wiz-persona-empty {
+  padding: 32px 10px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+/* ---------- 向导：汇总 ---------- */
+.wiz-summary {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wiz-sum-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev-2);
+  min-width: 0;
+}
+.wiz-sum-title { flex: 0 0 auto; font-size: 13px; font-weight: 600; }
+.wiz-sum-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wiz-sum-row .tag { flex: 0 0 auto; }
+
+@media (max-width: 900px) {
+  .wiz-persona-layout { grid-template-columns: minmax(0, 1fr); }
+  .wiz-persona-list { max-height: 200px; }
+  .wizard-backdrop { padding: 10px; }
+  .wizard-modal { height: calc(100vh - 20px); max-height: calc(100vh - 20px); }
 }

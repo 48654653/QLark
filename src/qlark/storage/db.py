@@ -15,9 +15,10 @@ import logging
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from ..core.models import Stats
 
@@ -105,6 +106,28 @@ class Database:
         with self._lock:
             cur = self._conn.executemany(sql, [tuple(p) for p in seq])
             cur.close()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """显式事务：块内所有写入要么全成、要么全不成。
+
+        摘要压缩必须用它（需求规格 §6.3）："写新总结"和"把这 W 轮标记为已压缩"
+        是一个原子操作。中途崩了如果只写了一半，就会出现"总结覆盖了这些轮次、
+        但原文仍被当作未压缩"的错乱状态，或者更糟——原文被标记了却没进总结，
+        那部分记忆就永久丢了。
+        """
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                try:
+                    self._conn.execute("ROLLBACK")
+                except sqlite3.Error:  # pragma: no cover - 回滚都失败就没什么能做的了
+                    log.exception("事务回滚失败")
+                raise
+            else:
+                self._conn.execute("COMMIT")
 
     # ------------------------------------------------------------------ 配置
     def get_config(self, key: str, default: Any = None) -> Any:

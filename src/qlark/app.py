@@ -13,6 +13,8 @@ from typing import Any, Callable
 from . import paths
 from .bot import BotService
 from .chat.personas import PersonaError
+from .chat.store import MessageStore
+from .chat.summarizer import SUMMARY_MAX_CHARS
 from .core.models import AppState, Phase
 from .logging_setup import setup_logging
 from .napcat import netconfig
@@ -32,6 +34,24 @@ LOG_PUSH_BATCH = 300
 LOG_BACKFILL = 300
 #: 无变化时状态推送的心跳间隔（用于刷新运行时长）
 STATE_HEARTBEAT = 3.0
+
+#: 记忆轮数 W 的可选范围（需求规格 §6.2）
+MEMORY_ROUNDS_RANGE = (1, 200)
+#: 上下文预算的可选范围（字符数，粗估）
+CONTEXT_BUDGET_RANGE = (2000, 200_000)
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 class Application:
@@ -228,8 +248,222 @@ class Application:
         self.mark_dirty()
         return {"ok": True, "whitelist": whitelist}
 
+    # ================================================================== 记忆（M4）
+    @property
+    def memory(self) -> MessageStore:
+        """记忆读写门面。
+
+        刻意复用流水线里那一个实例：另开一个 MessageStore 虽然也能读，
+        但会让"面板里删掉的记忆"和"流水线正在用的记忆"变成两套认知。
+        """
+        return self.bot.pipeline.store
+
+    def get_memory_config(self) -> dict[str, Any]:
+        return {
+            "memory_rounds": int(self.settings.get("memory_rounds") or 20),
+            "auto_summary": bool(self.settings.get("auto_summary", True)),
+            "summary_model": str(self.settings.get("summary_model") or ""),
+            "max_context_chars": int(self.settings.get("max_context_chars") or 24000),
+            "summary_runs": int(self.settings.get("summary_runs") or 0),
+            "summary_max_chars": SUMMARY_MAX_CHARS,
+            "overview": self.memory.memory_overview(),
+        }
+
+    def apply_memory_config(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        errors: dict[str, str] = {}
+        updates: dict[str, Any] = {}
+
+        if "memory_rounds" in payload:
+            value = _as_int(payload["memory_rounds"])
+            low, high = MEMORY_ROUNDS_RANGE
+            if value is None:
+                errors["memory_rounds"] = (
+                    "记忆轮数不能为空" if _is_blank(payload["memory_rounds"]) else "记忆轮数必须是整数"
+                )
+            elif not low <= value <= high:
+                errors["memory_rounds"] = f"记忆轮数必须在 {low}~{high} 之间"
+            else:
+                updates["memory_rounds"] = value
+
+        if "auto_summary" in payload:
+            updates["auto_summary"] = bool(payload["auto_summary"])
+
+        if "summary_model" in payload:
+            updates["summary_model"] = str(payload["summary_model"] or "").strip()
+
+        if "max_context_chars" in payload:
+            value = _as_int(payload["max_context_chars"])
+            low, high = CONTEXT_BUDGET_RANGE
+            if value is None:
+                errors["max_context_chars"] = (
+                    "上下文预算不能为空" if _is_blank(payload["max_context_chars"]) else "上下文预算必须是整数"
+                )
+            elif not low <= value <= high:
+                errors["max_context_chars"] = f"上下文预算必须在 {low}~{high} 之间"
+            else:
+                updates["max_context_chars"] = value
+
+        if errors:
+            return {"ok": False, "errors": errors}
+
+        if updates:
+            self.settings.update(**updates)
+            # 记忆轮数与压缩阈值是同一个值，改了要立刻生效
+            self.bot.pipeline.invalidate_clients()
+            self.logbus.add(
+                "已应用记忆配置：" + "、".join(sorted(updates)), level="info"
+            )
+        self.mark_dirty()
+        return {"ok": True, **self.get_memory_config()}
+
+    def list_memories(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "memories": self.memory.list_memories(),
+            "overview": self.memory.memory_overview(),
+        }
+
+    def get_memory(self, key: str) -> dict[str, Any]:
+        key = str(key or "")
+        if not key:
+            return {"ok": False, "error": "缺少记忆键"}
+        summary = self.memory.summary(key)
+        return {
+            "ok": True,
+            "memory_key": key,
+            "summary": (summary or {}).get("content") or "",
+            "summary_pending": bool(summary and summary.get("pending")),
+            "summary_updated_at": int((summary or {}).get("updated_at") or 0),
+            "messages": self.memory.memory_messages(key),
+        }
+
+    def update_memory_message(self, message_id: int, content: str) -> dict[str, Any]:
+        text = str(content or "")
+        if not text.strip():
+            return {"ok": False, "error": "内容不能为空"}
+        if not self.memory.update_message(int(message_id), text):
+            return {"ok": False, "error": "这条记忆不存在（可能已被删除）"}
+        self.logbus.add(f"已修改记忆 #{int(message_id)}", level="info")
+        self.mark_dirty()
+        return {"ok": True, "id": int(message_id), "content": text}
+
+    def delete_memory_message(self, message_id: int) -> dict[str, Any]:
+        if not self.memory.delete_message(int(message_id)):
+            return {"ok": False, "error": "这条记忆不存在（可能已被删除）"}
+        self.logbus.add(f"已删除记忆 #{int(message_id)}", level="warn")
+        self.mark_dirty()
+        return {"ok": True}
+
+    def delete_memory_summary(self, key: str) -> dict[str, Any]:
+        key = str(key or "")
+        if not self.memory.delete_summary(key):
+            return {"ok": False, "error": "这个会话还没有总结"}
+        self.logbus.add(f"已删除长期记忆摘要：{key}（原文已恢复为未压缩）", level="warn")
+        self.mark_dirty()
+        return {"ok": True}
+
+    def clear_memory(self, key: str) -> dict[str, Any]:
+        key = str(key or "")
+        removed = self.memory.clear(key)
+        self.logbus.add(f"已清空记忆：{key}（{removed} 条原文 + 总结）", level="warn")
+        self.mark_dirty()
+        return {"ok": True, "deleted_messages": removed}
+
+    def summarize_memory_now(self, key: str) -> dict[str, Any]:
+        """手动触发一次压缩（面板上的「立即压缩」）。
+
+        注意它会**照常受 W 轮门槛约束**：不到 W 轮就没有可压缩的内容，
+        这里返回 `not_enough` 而不是硬压 —— 硬压会把还很新鲜、模型正需要
+        逐字看到的对话提前揉成一团。
+        """
+        key = str(key or "")
+        outcome = self.bot.pipeline.summarizer.maybe_summarize(key, force=True)
+        if outcome.did_call_model:
+            self.db.bump_stats(
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
+                calls=1,
+            )
+        self.mark_dirty()
+        labels = {
+            "ok": f"已压缩 {outcome.rounds} 轮 → {outcome.chars} 字",
+            "not_enough": f"未压缩原文不足 {self.bot.pipeline.summarizer.window} 轮，暂时无需压缩",
+            "disabled": "自动总结已关闭",
+            "failed": f"压缩失败，原文已保留：{outcome.error}",
+            "empty": "模型返回了空摘要，原文已保留",
+        }
+        ok = outcome.status == "ok"
+        if outcome.status == "failed":
+            self.logbus.add(labels["failed"], level="warn")
+        return {
+            "ok": ok,
+            "status": outcome.status,
+            "rounds": outcome.rounds,
+            "chars": outcome.chars,
+            "message": labels.get(outcome.status, outcome.status),
+        }
+
     def mark_dirty(self) -> None:
         self._dirty.set()
+
+    # ================================================================== 首启向导（M6）
+    def get_wizard_state(self) -> dict[str, Any]:
+        """首启向导的状态与各步完成情况。
+
+        每一步都用**已有的真实状态**判断，而不是另存一份"向导进度"：
+        另存进度会和实际配置漂移（用户直接去模型页填好了，向导还显示没配）。
+        """
+        model = self.get_model_config()
+        model_ready = bool(
+            str(model.get("base_url") or "").strip()
+            and str(model.get("model") or "").strip()
+            and model.get("api_key_set")
+        )
+        personas = self.list_personas().get("personas") or []
+        # 人设1 是出厂默认且不可删除，所以"人设可用"等价于"至少有一个启用中的人设"
+        persona_ready = any(bool(item.get("enabled")) for item in personas)
+        logged_in = bool(self.settings.qq_account)
+
+        return {
+            "first_run_done": bool(self.settings.get("first_run_done", False)),
+            "risk_acknowledged": bool(self.settings.get("risk_acknowledged", False)),
+            "steps": {
+                "risk": bool(self.settings.get("risk_acknowledged", False)),
+                "model": model_ready,
+                "login": logged_in,
+                "persona": persona_ready,
+            },
+            "detail": {
+                "phase": self.login.phase.value,
+                "qq": self.settings.qq_account,
+                "model": str(model.get("model") or ""),
+                "base_url": str(model.get("base_url") or ""),
+                "persona_count": len(personas),
+            },
+        }
+
+    def acknowledge_risk(self) -> dict[str, Any]:
+        """用户确认"知道 QQ 机器人有风控 / 封号风险"。"""
+        self.settings.risk_acknowledged = True
+        self.logbus.add("用户已确认风控提示", level="info")
+        self.mark_dirty()
+        return {"ok": True, **self.get_wizard_state()}
+
+    def finish_wizard(self) -> dict[str, Any]:
+        """结束首启向导。**未确认风控时拒绝** —— 那是这一步存在的唯一理由。"""
+        if not bool(self.settings.get("risk_acknowledged", False)):
+            return {"ok": False, "error": "请先阅读并确认风控提示"}
+        self.settings.first_run_done = True
+        self.logbus.add("首启向导已完成", level="info")
+        self.mark_dirty()
+        return {"ok": True, **self.get_wizard_state()}
+
+    def restart_wizard(self) -> dict[str, Any]:
+        """重新走一遍向导（帮助菜单里的入口，也方便演示）。"""
+        self.settings.first_run_done = False
+        self.mark_dirty()
+        return {"ok": True, **self.get_wizard_state()}
 
     # ================================================================== 推送
     def attach_window(self, window: Any) -> None:

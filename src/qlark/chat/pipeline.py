@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..core.models import LogSource
-from ..llm.client import LLMError, OpenAIChatClient
+from ..llm.client import ChatResult, LLMError, OpenAIChatClient
 from ..napcat.logbus import LogBus
 from ..onebot.client import OneBotClient, OneBotError
 from ..onebot.events import GROUP, MessageEvent, describe_event, parse_message_event
@@ -30,14 +30,51 @@ from ..storage.db import Database
 from .commands import CommandRouter
 from .context import build_chat_messages
 from .dedup import MessageDedup
+from .images import (
+    DEFAULT_MAX_IMAGES,
+    ImagePreparer,
+    PreparedImage,
+    build_user_content,
+    looks_like_vision_unsupported,
+)
+from .moderation import RateLimiter, find_blocked_word
 from .personas import PersonaStore
 from .queue import SessionQueue
 from .store import MessageStore, memory_key
+from .summarizer import SUMMARY_MAX_TOKENS, SUMMARY_TEMPERATURE, Summarizer
 
 log = logging.getLogger(__name__)
 
 #: 存进记忆的图片占位文本
 IMAGE_PLACEHOLDER = "[图片]"
+
+#: 长期记忆块的标签（需求规格 §6.3 组装请求时的上下文）
+SUMMARY_BLOCK_LABEL = "[长期记忆]"
+
+#: 默认上下文预算（字符数，粗估）
+DEFAULT_CONTEXT_BUDGET = 24000
+
+
+def _strip_image_placeholders(text: str) -> str:
+    """去掉文本里的 ``[图片]`` 占位。
+
+    多模态请求里图片会以真身出现，文本里再留一条 ``[图片]`` 会让模型以为
+    "这里有两张图"，甚至去描述那个并不存在的占位符。
+    """
+    cleaned = str(text or "").replace(IMAGE_PLACEHOLDER, " ")
+    return " ".join(cleaned.split())
+
+
+def _replace_user_content(
+    messages: list[dict[str, Any]], text: str
+) -> list[dict[str, Any]]:
+    """把最后一条 user 消息的多模态内容换回纯文本（视觉降级用）。"""
+    result = [dict(message) for message in messages]
+    for message in reversed(result):
+        if message.get("role") == "user":
+            message["content"] = text or IMAGE_PLACEHOLDER
+            break
+    return result
 
 
 @dataclass
@@ -48,6 +85,16 @@ class PipelineStats:
     failed: int = 0
     #: 走指令（未调用模型）的消息数
     commands: int = 0
+    #: 成功执行的记忆压缩次数（M4）
+    summaries: int = 0
+    #: 图片成功交给视觉模型的次数（M5）
+    images: int = 0
+    #: 因为模型不支持视觉而降级成纯文本的次数（M5）
+    vision_fallbacks: int = 0
+    #: 命中敏感词被拦下的条数（M6 风控）
+    blocked: int = 0
+    #: 因为超出速率上限被拦下的条数（M6 风控）
+    rate_limited: int = 0
     last_error: str | None = None
     last_reply_at: float | None = None
 
@@ -58,6 +105,11 @@ class PipelineStats:
             "dropped": self.dropped,
             "failed": self.failed,
             "commands": self.commands,
+            "summaries": self.summaries,
+            "images": self.images,
+            "vision_fallbacks": self.vision_fallbacks,
+            "blocked": self.blocked,
+            "rate_limited": self.rate_limited,
             "last_error": self.last_error,
             "last_reply_at": self.last_reply_at,
         }
@@ -91,11 +143,22 @@ class MessagePipeline:
         )
         self.stats = PipelineStats()
 
+        self.summarizer = Summarizer(
+            settings,
+            self.store,
+            complete=self._summarize_call,
+            logbus=logbus,
+        )
+        self._images = ImagePreparer()
+        self._rate_limiter: RateLimiter | None = None
+
         self._paused = settings.bot_paused
         self._running = False
         self._lock = threading.RLock()
 
         self._llm_cache: tuple[tuple[str, str, str], OpenAIChatClient] | None = None
+        self._vision_cache: tuple[tuple[Any, ...], OpenAIChatClient] | None = None
+        self._summary_cache: tuple[tuple[str, str, str], OpenAIChatClient] | None = None
         self._ob_cache: tuple[tuple[str, str], OneBotClient] | None = None
 
     # ================================================================== 生命周期
@@ -124,6 +187,8 @@ class MessagePipeline:
         """配置变更后让缓存的模型 / OneBot 客户端失效，下一次调用重新构造。"""
         with self._lock:
             self._llm_cache = None
+            self._vision_cache = None
+            self._summary_cache = None
             self._ob_cache = None
 
     # ================================================================== 暂停
@@ -261,18 +326,65 @@ class MessagePipeline:
             return
 
         persona = self.personas.get(persona_uid) or {}
-        user_text = parsed.text_for_memory() or (IMAGE_PLACEHOLDER if parsed.has_image else "")
+        memory_text: str = parsed.text_for_memory() or (
+            IMAGE_PLACEHOLDER if parsed.has_image else ""
+        )
+
+        # 风控两条都放在调用模型**之前**：既然要拦，就别先花掉一次 token
+        blocked_word = find_blocked_word(memory_text, self.settings.get("blocked_words") or [])
+        if blocked_word:
+            self.stats.blocked += 1
+            self._log(
+                f"命中敏感词「{blocked_word}」，已忽略：{event.describe()}",
+                level="warn",
+            )
+            self._on_change()
+            return
+
+        allowed, sent_count = self._limiter().check(event.session_id)
+        if not allowed:
+            self.stats.rate_limited += 1
+            wait = self._limiter().retry_after(event.session_id)
+            self._log(
+                f"{event.session_id} 一分钟内已回复 {sent_count} 条，达到上限，本条已忽略"
+                f"（约 {wait:.0f} 秒后恢复；可在「模型配置 → 对话行为」里调整）",
+                level="warn",
+            )
+            self._on_change()
+            return
+
+        # 图片：**立即下载**（URL 约 2 小时过期，技术文档坑 17）。
+        # 记忆里始终只留 [图片] 占位，base64 绝不入库。
+        prepared: list[PreparedImage] = []
+        if parsed.has_image:
+            prepared = self._prepare_images(parsed)
+
+        if prepared:
+            # 多模态：文本里那条 [图片] 占位要去掉，否则模型会看到"占位 + 真图"
+            visible = _strip_image_placeholders(parsed.text) or "请看这张图片。"
+            user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
+        else:
+            user_content = memory_text
+
         rounds = int(self.settings.get("memory_rounds") or 20)
+
+        # 长期记忆摘要作为独立 system 块插入，**不占轮次**（需求规格 §6.3）
+        summary_text = self.store.summary_text(key)
+        extra_system = [f"{SUMMARY_BLOCK_LABEL} {summary_text}"] if summary_text else []
 
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆
         history = self.store.recent_rounds(key, rounds)
         system_prompt = self.store.persona_prompt(persona_uid)
+        history = self._fit_budget(history, system_prompt, extra_system, user_content)
         messages = build_chat_messages(
-            system_prompt=system_prompt, history=history, user_content=user_text
+            system_prompt=system_prompt,
+            history=history,
+            user_content=user_content,
+            extra_system=extra_system,
         )
 
         started = time.monotonic()
-        result = self._llm(persona).complete(messages)
+        result = self._complete_with_vision_fallback(persona, messages, prepared, memory_text)
         elapsed = time.monotonic() - started
 
         self.db.bump_stats(
@@ -287,9 +399,10 @@ class MessagePipeline:
             self._log("模型返回空回复，未发送", level="warn")
             return
 
-        # 发送成功后才落库，保证记忆里不会出现"有问无答"的空洞
+        # 发送成功后才落库，保证记忆里不会出现"有问无答"的空洞。
+        # 注意存的是 memory_text（只含 [图片] 占位），**绝不能把 base64 写进记忆**。
         self.store.append(
-            key, "user", user_text, has_image=parsed.has_image,
+            key, "user", memory_text, has_image=parsed.has_image,
             msg_id=event.message_id, created_at=event.time or None,
         )
         self.store.append(
@@ -306,6 +419,79 @@ class MessagePipeline:
             f"已回复 {event.session_id}（{elapsed:.1f}s，"
             f"{result.prompt_tokens}+{result.completion_tokens} tokens，{sent} 条消息）"
         )
+
+        # 回复已经发出去了，压缩放在最后：它慢一点也不会让用户多等
+        self._maybe_summarize(key)
+
+    # ------------------------------------------------------------------ 记忆
+    def _context_budget(self) -> int:
+        try:
+            value = int(self.settings.get("max_context_chars") or DEFAULT_CONTEXT_BUDGET)
+        except (TypeError, ValueError):
+            value = DEFAULT_CONTEXT_BUDGET
+        return max(2000, value)
+
+    def _fit_budget(
+        self,
+        history: list[tuple[str, str]],
+        system_prompt: str,
+        extra_system: list[str],
+        user_content: str | list[dict[str, Any]],
+    ) -> list[tuple[str, str]]:
+        """超出上下文预算时，**从最早的原文开始丢弃，长期记忆摘要始终保留**。
+
+        需求规格 §6.3 的硬规则：宁可丢掉最早的寒暄，也不能丢掉被压缩过的
+        长期信息 —— 那部分内容一旦丢了就再也找不回来（原文已经被标记为已压缩）。
+        """
+        budget = self._context_budget()
+        fixed = len(system_prompt or "") + sum(len(block) for block in extra_system)
+        if isinstance(user_content, str):
+            fixed += len(user_content)
+        elif isinstance(user_content, list):
+            for part in user_content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "image_url":
+                    # 图片按 base64 的体积折算成本，否则一张大图会把历史全挤掉
+                    fixed += len(str((part.get("image_url") or {}).get("url") or ""))
+                else:
+                    fixed += len(str(part.get("text") or ""))
+
+        kept: list[tuple[str, str]] = []
+        used = fixed
+        for role, content in reversed(history):
+            cost = len(str(content or "")) + 8
+            if kept and used + cost > budget:
+                break
+            used += cost
+            kept.append((role, content))
+        kept.reverse()
+
+        dropped = len(history) - len(kept)
+        if dropped:
+            self._log(
+                f"上下文超预算（{used}/{budget} 字符），已丢弃最早的 {dropped} 条原文；"
+                "长期记忆摘要保留",
+                level="debug",
+            )
+        return kept
+
+    def _maybe_summarize(self, key: str) -> None:
+        """按 W 轮触发合并式压缩；把总结调用的 token 也计入今日统计。"""
+        try:
+            outcome = self.summarizer.maybe_summarize(key)
+        except Exception:  # 兜底：压缩绝不能影响已经完成的这次回复
+            log.exception("记忆压缩未预期失败")
+            return
+        if outcome.status == "ok":
+            self.stats.summaries += 1
+        if outcome.did_call_model:
+            self.db.bump_stats(
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
+                calls=1,
+            )
+            self._on_change()
 
     # ------------------------------------------------------------------ 错误
     def _on_llm_error(self, event: MessageEvent, exc: LLMError) -> None:
@@ -351,14 +537,166 @@ class MessagePipeline:
         self._llm_cache = (signature, client)
         return client
 
-    def _sender(self) -> ReplySender:
+    # ------------------------------------------------------------------ 图片
+    def _prepare_images(self, parsed: ParsedMessage) -> list[PreparedImage]:
+        """立即下载并预处理图片；任何一张失败都不影响其余。"""
+        if not bool(self.settings.get("image_understanding", True)):
+            self._log("图片理解已关闭，按 [图片] 占位处理", level="debug")
+            return []
+        try:
+            limit = int(self.settings.get("max_images_per_message") or DEFAULT_MAX_IMAGES)
+        except (TypeError, ValueError):
+            limit = DEFAULT_MAX_IMAGES
+
+        images, problems = self._images.prepare_all(
+            parsed.images, limit=limit, resolve=self._resolve_image_file
+        )
+        if problems:
+            self._log("部分图片未能处理：" + "；".join(problems), level="warn")
+        if images:
+            total_kb = max(1, sum(image.size for image in images) // 1024)
+            self._log(
+                f"已下载 {len(images)} 张图片（约 {total_kb} KB），将交给视觉模型",
+                level="debug",
+            )
+        return images
+
+    def _resolve_image_file(self, ref: Any) -> str | None:
+        """``url`` 缺失时向 NapCat 要一次（OneBot 的 ``get_image``）。"""
+        file_value = str(getattr(ref, "file", "") or "").strip()
+        if not file_value:
+            return None
+        try:
+            payload = self._onebot().call("get_image", {"file": file_value})
+        except OneBotError as exc:
+            self._log(f"向 NapCat 索取图片地址失败：{exc}", level="warn")
+            return None
+        data = payload.get("data") or {}
+        resolved = str(data.get("url") or data.get("file") or "").strip()
+        return resolved or None
+
+    def _complete_with_vision_fallback(
+        self,
+        persona: dict[str, Any] | None,
+        messages: list[dict[str, Any]],
+        prepared: list[PreparedImage],
+        memory_text: str,
+    ) -> ChatResult:
+        """带图调用；模型明确表示不支持图片时，降级成纯文本再试一次。
+
+        需求规格 §6.5：「模型不支持视觉时降级」。降级而不是直接报错，是因为
+        用户至少还想知道"他发了什么文字"；而且**明确告诉用户去配视觉模型**，
+        否则他会一直以为图片被看懂了。
+        """
+        if not prepared:
+            return self._llm(persona).complete(messages)
+
+        vision_model = str(self.settings.get("vision_model") or "").strip()
+        client = self._llm_vision(persona) if vision_model else self._llm(persona)
+
+        try:
+            result = client.complete(messages)
+        except LLMError as exc:
+            if not looks_like_vision_unsupported(str(exc)):
+                raise
+            self.stats.vision_fallbacks += 1
+            self._log(
+                "当前模型不支持图片，已降级为纯文本。"
+                "想让机器人看懂图片，请在「模型配置 → 视觉模型」里填一个支持视觉的模型"
+                f"（原始错误：{exc}）",
+                level="warn",
+            )
+            return self._llm(persona).complete(_replace_user_content(messages, memory_text))
+
+        self.stats.images += 1
+        return result
+
+    def _llm_vision(self, persona: dict[str, Any] | None = None) -> OpenAIChatClient:
+        """视觉模型客户端：其余参数（温度 / 上限）沿用全局与当前人设。"""
+        persona = persona or {}
+        base_url = str(self.settings.get("base_url") or "")
+        api_key = str(self.settings.get("api_key") or "")
+        model = str(self.settings.get("vision_model") or "").strip() or str(
+            persona.get("model_override") or self.settings.get("model") or ""
+        )
+
+        max_tokens = persona.get("max_tokens_override")
+        if max_tokens in (None, ""):
+            max_tokens = self.settings.get("max_tokens")
+        temperature = persona.get("temperature_override")
+        if temperature is None:
+            temperature = self.settings.get("temperature")
+
+        signature = ("vision", base_url, api_key, model, str(max_tokens), str(temperature))
+        cached = self._vision_cache
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+        client = OpenAIChatClient(
+            base_url, api_key, model, max_tokens=max_tokens, temperature=temperature
+        )
+        self._vision_cache = (signature, client)
+        return client
+
+    def _llm_summary(self) -> OpenAIChatClient:
+        """总结专用客户端：用「总结模型」，没配就退回对话模型。
+
+        温度压到 0.3、输出上限压到 800 —— 摘要是要稳定复现的系统任务，
+        不需要也不会让它发挥。
+        """
+        base_url = str(self.settings.get("base_url") or "")
+        api_key = str(self.settings.get("api_key") or "")
+        model = str(self.settings.get("summary_model") or "").strip() or str(
+            self.settings.get("model") or ""
+        )
+        signature = ("summary", base_url, api_key, model)
+        cached = self._summary_cache
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+
+        try:
+            configured = int(self.settings.get("max_tokens") or 0)
+        except (TypeError, ValueError):
+            configured = 0
+        max_tokens = min(configured, SUMMARY_MAX_TOKENS) if configured > 0 else SUMMARY_MAX_TOKENS
+
+        client = OpenAIChatClient(
+            base_url,
+            api_key,
+            model,
+            max_tokens=max_tokens,
+            temperature=SUMMARY_TEMPERATURE,
+        )
+        self._summary_cache = (signature, client)
+        return client
+
+    def _summarize_call(self, messages: list[dict[str, Any]]) -> ChatResult:
+        """摘要器注入的模型调用：只重试 1 次（失败会被标记 pending，下轮再来）。"""
+        return self._llm_summary().complete(messages, retries=1)
+
+    def _limiter(self) -> RateLimiter:
+        """速率限制器。配置改了就地重建（窗口会重置，可以接受）。"""
+        try:
+            limit = int(self.settings.get("rate_limit_per_minute") or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        current = self._rate_limiter
+        if current is None or current.limit != limit:
+            current = RateLimiter(limit=limit)
+            self._rate_limiter = current
+        return current
+
+    def _onebot(self) -> OneBotClient:
+        """到 NapCat 动作端口的客户端（配置没变就复用连接）。"""
         signature = (self.settings.onebot_base_url, self.settings.onebot_token)
         cached = self._ob_cache
         if cached is None or cached[0] != signature:
             cached = (signature, OneBotClient(signature[0], signature[1]))
             self._ob_cache = cached
+        return cached[1]
+
+    def _sender(self) -> ReplySender:
         return ReplySender(
-            cached[1],
+            self._onebot(),
             quote_group=self.settings.reply_quote_group,
             max_chars=self.settings.max_reply_chars,
         )

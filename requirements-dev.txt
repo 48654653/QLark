@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=8.0
+# M6 打包（只有 tools/build_exe.py 用得到，运行时不依赖）
+pyinstaller>=6.0

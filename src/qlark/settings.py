@@ -38,10 +38,27 @@ DEFAULTS: dict[str, Any] = {
     "notify_error_private": True,
     "ignored_users": [],
     "ignored_groups": [],
-    # ---- 记忆 / 人设（M4 使用，先占位）----
+    # ---- 记忆 / 人设（M4）----
     "memory_rounds": 20,
     "auto_summary": True,
     "persona_whitelist_only": True,
+    #: 累计"已压缩次数"，只用于记忆面板的容量提示展示
+    "summary_runs": 0,
+    #: 单次请求的上下文预算（字符数，粗估）。超出就从**最早的原文**开始丢弃，
+    #: 长期记忆摘要始终保留（需求规格 §6.3）
+    "max_context_chars": 24000,
+    #: 单条消息最多处理几张图（需求规格 §6.5「设张数上限」）
+    "max_images_per_message": 3,
+    #: 是否把图片交给视觉模型（关掉则一律降级成 [图片] 占位）
+    "image_understanding": True,
+    #: 首启向导是否已完成（M6）
+    "first_run_done": False,
+    #: 用户是否已确认"QQ 机器人存在风控/封号风险"（需求规格 §9.3）
+    "risk_acknowledged": False,
+    #: 单会话每分钟最多回复几条（需求规格 §9.3「发送速率限制」）。0 = 不限制
+    "rate_limit_per_minute": 12,
+    #: 命中就拒绝回复的词（需求规格 §9.3「可选敏感词过滤」），空列表 = 关闭
+    "blocked_words": [],
     # ---- 模型（M3 使用，先占位）----
     "base_url": "",
     "api_key": "",
@@ -83,6 +100,36 @@ class Settings:
         merged = dict(DEFAULTS)
         merged.update(self._db.all_config())
         return merged
+
+    # ------------------------------------------------------------- 通配属性
+    #
+    # 为什么需要这两个方法：下面那些 @property 只覆盖了一部分配置键。其余键
+    # （memory_rounds / auto_summary / model / max_tokens …）如果直接写
+    # `settings.memory_rounds = 3`，Python 会**悄悄建一个和配置表无关的实例属性**，
+    # 而 get("memory_rounds") 仍然返回旧值 —— 赋值看起来成功了，其实完全没生效。
+    # 这种静默失效极难排查，所以在这里统一路由到配置表。
+    def __getattr__(self, name: str) -> Any:
+        # 只在常规查找失败后才会走到这里；下划线开头直接放弃，避免 __init__ 期间递归
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name in DEFAULTS:
+            return self.get(name)
+        raise AttributeError(f"未知配置项：{name}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        descriptor = getattr(type(self), name, None)
+        if isinstance(descriptor, property):
+            if descriptor.fset is None:
+                raise AttributeError(f"{name} 是只读配置，请用 set() 或专用方法修改")
+            descriptor.fset(self, value)
+            return
+        if name in DEFAULTS:
+            self.set(name, value)
+            return
+        raise AttributeError(f"未知配置项：{name}")
 
     # ------------------------------------------------------------------ 快捷属性
     @property

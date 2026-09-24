@@ -252,6 +252,9 @@
             <button class="btn ghost sm" id="qaRuntimeDir" type="button">
               <svg class="icon sm"><use href="#i-folder" xlink:href="#i-folder"></use></svg>运行时目录
             </button>
+            <button class="btn ghost sm" id="qaWizard" type="button" title="重新运行首次使用向导">
+              <svg class="icon sm"><use href="#i-shield" xlink:href="#i-shield"></use></svg>重新运行向导
+            </button>
           </div>
         </section>
       </section>
@@ -450,6 +453,20 @@
               </label>
               <span class="field-hint">关闭后只写日志，不向对方回复</span>
             </div>
+
+            <label class="field">
+              <span class="field-label">每分钟回复上限</span>
+              <input class="input" id="bRateLimit" type="number" min="0" max="600" step="1" inputmode="numeric" placeholder="0">
+              <span class="field-hint">单个会话每分钟最多回复几条；0 = 不限制。QQ 对高频回复很敏感，建议保留限制</span>
+              <span class="field-err" id="eRateLimit" hidden></span>
+            </label>
+
+            <label class="field span2">
+              <span class="field-label">屏蔽词<span class="field-count" id="bBlockedWordsCount">0 个</span></span>
+              <textarea class="textarea mono" id="bBlockedWords" rows="4" spellcheck="false" placeholder="每行一个词"></textarea>
+              <span class="field-hint">命中这些词的<strong>消息会被直接忽略</strong>（不会回复）。留空 = 不启用</span>
+              <span class="field-err" id="eBlockedWords" hidden></span>
+            </label>
           </div>
 
           <div class="panel-foot">
@@ -577,12 +594,130 @@
 
       <!-- ---------- 记忆面板 ---------- -->
       <section class="page" id="page-memory" data-page="memory">
-        <section class="card placeholder">
-          <div class="ph-icon"><svg class="icon lg"><use href="#i-memory" xlink:href="#i-memory"></use></svg></div>
-          <h2 class="ph-title">记忆面板</h2>
-          <p class="ph-badge">将在 M4 阶段实现</p>
-          <p class="ph-desc">设置记忆轮数 W（默认 20）与自动总结开关，按会话分组浏览 / 编辑 / 删除原文与当前摘要，并显示会话数、已压缩次数与占用体积。</p>
+
+        <!-- 顶部：记忆参数 -->
+        <section class="card panel mem-config-panel">
+          <div class="panel-head">
+            <h2 class="panel-title">记忆参数</h2>
+            <span class="tag" id="memCfgTag">读取中…</span>
+            <span class="spacer"></span>
+            <span class="head-hint">改动即时生效，无需重启 NapCat</span>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">记忆轮数 W</span>
+              <input class="input" id="memRounds" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="20">
+              <span class="field-hint">每次请求携带的最近原文轮数；同时也是触发压缩的轮数</span>
+              <span class="field-err" id="eMemRounds" hidden></span>
+            </label>
+
+            <div class="field">
+              <span class="field-label">自动总结</span>
+              <label class="switch">
+                <input type="checkbox" id="memAutoSummary">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">原文满 W 轮后自动压缩成摘要</span>
+              </label>
+              <span class="field-hint">关闭后原文无限累积，不做压缩</span>
+            </div>
+
+            <label class="field">
+              <span class="field-label">总结模型（选填）</span>
+              <input class="input" id="memSummaryModel" type="text" placeholder="留空 = 用对话模型" spellcheck="false" autocomplete="off">
+              <span class="field-hint">仅用于压缩摘要，不影响对话模型</span>
+              <span class="field-err" id="eMemSummaryModel" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">上下文预算（字符）</span>
+              <input class="input" id="memMaxContext" type="number" min="2000" max="200000" step="1000" inputmode="numeric" placeholder="24000">
+              <span class="field-hint">超出后从最早的原文开始丢弃，长期记忆摘要始终保留</span>
+              <span class="field-err" id="eMemMaxContext" hidden></span>
+            </label>
+          </div>
+
+          <div class="mem-capacity">
+            <span class="mem-cap"><span class="mem-cap-label">会话数</span><span class="mem-cap-value" id="memCapSessions">—</span></span>
+            <span class="mem-cap"><span class="mem-cap-label">原文条数</span><span class="mem-cap-value" id="memCapMessages">—</span></span>
+            <span class="mem-cap"><span class="mem-cap-label">已压缩次数</span><span class="mem-cap-value" id="memCapRuns">—</span></span>
+            <span class="mem-cap"><span class="mem-cap-label">占用体积</span><span class="mem-cap-value" id="memCapBytes">—</span></span>
+            <span class="spacer"></span>
+            <span class="mem-pending" id="memPending" hidden>
+              <svg class="icon sm"><use href="#i-warn" xlink:href="#i-warn"></use></svg>
+              <span id="memPendingText">有 0 个会话的压缩失败待重试</span>
+            </span>
+          </div>
+
+          <div class="panel-foot">
+            <button class="btn primary" id="btnMemApply" type="button">应用</button>
+            <span class="spacer"></span>
+            <span class="foot-hint" id="memCfgHint"></span>
+          </div>
         </section>
+
+        <!-- 左：会话列表 / 右：详情 -->
+        <div class="mem-layout">
+          <aside class="card mem-list-panel">
+            <div class="panel-head">
+              <h2 class="panel-title">会话记忆</h2>
+              <span class="tag" id="memCountTag">—</span>
+              <span class="spacer"></span>
+              <button class="btn ghost sm" id="btnMemRefresh" type="button">
+                <svg class="icon sm"><use href="#i-refresh" xlink:href="#i-refresh"></use></svg>刷新
+              </button>
+            </div>
+            <ul class="mem-list" id="memList">
+              <li class="mem-empty-row">正在读取记忆…</li>
+            </ul>
+          </aside>
+
+          <section class="card mem-detail-panel">
+            <div class="panel-head">
+              <h2 class="panel-title" id="memDetailTitle">记忆详情</h2>
+              <span class="tag" id="memDetailPersonaTag" hidden>—</span>
+              <span class="spacer"></span>
+              <span class="field-hint" id="memDetailMeta"></span>
+            </div>
+
+            <div class="mem-placeholder" id="memEmpty">请从左侧选择一个会话</div>
+
+            <div id="memDetail" hidden>
+              <section class="mem-summary-box">
+                <div class="mem-summary-head">
+                  <h3 class="mem-summary-title">长期记忆摘要</h3>
+                  <span class="tag" id="memSummaryTag">—</span>
+                  <span class="tag warn" id="memSummaryPendingTag" hidden>待重试</span>
+                  <span class="spacer"></span>
+                  <span class="field-hint" id="memSummaryTime"></span>
+                </div>
+                <div class="mem-summary-body" id="memSummaryBody"></div>
+                <div class="mem-summary-foot">
+                  <button class="btn primary sm" id="btnMemSummarize" type="button">立即压缩</button>
+                  <button class="btn ghost sm" id="btnMemDeleteSummary" type="button">删除摘要</button>
+                  <span class="spacer"></span>
+                  <span class="field-hint" id="memSummaryHint"></span>
+                </div>
+              </section>
+
+              <section class="mem-msgs-box">
+                <div class="mem-msgs-head">
+                  <h3 class="mem-msgs-title">原文</h3>
+                  <span class="tag" id="memMsgCountTag">—</span>
+                  <span class="spacer"></span>
+                  <span class="field-hint" id="memMsgHint"></span>
+                </div>
+                <ul class="mem-msgs" id="memMsgList"></ul>
+              </section>
+
+              <div class="panel-foot mem-danger-foot">
+                <button class="btn danger" id="btnMemClear" type="button">清空该会话记忆</button>
+                <span class="spacer"></span>
+                <span class="foot-hint" id="memClearHint"></span>
+              </div>
+            </div>
+          </section>
+        </div>
       </section>
 
       <!-- ---------- 日志 ---------- -->
@@ -711,6 +846,194 @@
       </button>
       <span class="spacer"></span>
       <button class="btn ghost" id="btnClose" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 首启向导（M6） ===== -->
+<div class="modal-backdrop wizard-backdrop" id="wizardModal" hidden>
+  <div class="modal wizard-modal" role="dialog" aria-modal="true" aria-labelledby="wizardTitle">
+    <div class="modal-head">
+      <h2 class="modal-title" id="wizardTitle">
+        <svg class="icon"><use href="#i-shield" xlink:href="#i-shield"></use></svg>首次使用向导
+      </h2>
+      <span class="tag" id="wizardStepTag">第 1 / 5 步</span>
+      <button class="icon-btn sm" id="wizardClose" type="button" title="关闭向导：不会写入完成状态，下次启动会再次弹出" aria-label="关闭向导">
+        <svg class="icon sm"><use href="#i-close" xlink:href="#i-close"></use></svg>
+      </button>
+    </div>
+
+    <ol class="wiz-steps" id="wizardSteps">
+      <li class="wiz-step" data-wiz-step="0">
+        <span class="wiz-step-mark"><svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg><span class="wiz-step-num">1</span></span>
+        <span class="wiz-step-text">风控提示</span>
+      </li>
+      <li class="wiz-sep" aria-hidden="true"></li>
+      <li class="wiz-step" data-wiz-step="1">
+        <span class="wiz-step-mark"><svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg><span class="wiz-step-num">2</span></span>
+        <span class="wiz-step-text">模型配置</span>
+      </li>
+      <li class="wiz-sep" aria-hidden="true"></li>
+      <li class="wiz-step" data-wiz-step="2">
+        <span class="wiz-step-mark"><svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg><span class="wiz-step-num">3</span></span>
+        <span class="wiz-step-text">登录 QQ</span>
+      </li>
+      <li class="wiz-sep" aria-hidden="true"></li>
+      <li class="wiz-step" data-wiz-step="3">
+        <span class="wiz-step-mark"><svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg><span class="wiz-step-num">4</span></span>
+        <span class="wiz-step-text">人设</span>
+      </li>
+      <li class="wiz-sep" aria-hidden="true"></li>
+      <li class="wiz-step" data-wiz-step="4">
+        <span class="wiz-step-mark"><svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg><span class="wiz-step-num">5</span></span>
+        <span class="wiz-step-text">完成</span>
+      </li>
+    </ol>
+
+    <div class="modal-body wizard-body">
+
+      <!-- 第 1 步：风控提示 -->
+      <section class="wiz-pane" data-wiz-pane="0">
+        <div class="alert err wiz-alert">
+          <svg class="icon sm"><use href="#i-warn" xlink:href="#i-warn"></use></svg>
+          <div class="wiz-alert-main">
+            <strong class="wiz-alert-title">使用第三方 QQ 机器人可能触发腾讯风控，导致账号被限制或封禁</strong>
+            <ul class="wiz-risks">
+              <li>QQ 官方不允许第三方客户端挂机。风控的表现可能是：登录被踢下线、部分功能受限、临时冻结，直至永久封禁。</li>
+              <li>请勿用于骚扰他人、刷屏、营销推广、批量拉群等用途；这类行为会显著提高封号概率，也可能违反法律法规。</li>
+              <li>建议先用小号试用一段时间，确认稳定后再考虑换成常用账号，并自行承担使用后果。</li>
+              <li>QLark 只是一个运行在你自己电脑上的本地客户端，不提供任何绕过风控、绕过检测的能力，也无法保证账号安全。</li>
+            </ul>
+          </div>
+        </div>
+        <label class="switch wiz-ack">
+          <input type="checkbox" id="wizRiskAck">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-text">我已了解上述风控风险，自愿承担使用后果</span>
+        </label>
+        <p class="field-hint">勾选后才能继续。如果暂时不想用，可以点左下角「退出程序」。</p>
+      </section>
+
+      <!-- 第 2 步：模型配置 -->
+      <section class="wiz-pane" data-wiz-pane="1">
+        <p class="wiz-lead">填写 OpenAI 兼容接口的三项信息，点「测试连接」确认能通。测不通可以先跳过，稍后在「模型配置」页继续填。</p>
+        <div class="form-grid wiz-form">
+          <label class="field span2">
+            <span class="field-label">Base URL</span>
+            <input class="input" id="wizBaseUrl" type="text" placeholder="https://api.deepseek.com" spellcheck="false" autocomplete="off">
+            <span class="field-hint">不带 <span class="mono">/v1/chat/completions</span> 后缀，QLark 会自动拼接</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">API Key</span>
+            <input class="input" id="wizApiKey" type="password" placeholder="sk-…" spellcheck="false" autocomplete="new-password">
+            <span class="field-hint" id="wizApiKeyHint">尚未读取配置</span>
+          </label>
+
+          <label class="field">
+            <span class="field-label">对话模型</span>
+            <input class="input" id="wizModel" type="text" placeholder="deepseek-chat" spellcheck="false" autocomplete="off">
+            <span class="field-hint">直接填服务商给出的模型名</span>
+          </label>
+        </div>
+        <div class="wiz-test-row">
+          <button class="btn ghost" id="wizTestBtn" type="button">测试连接</button>
+          <span class="test-result" id="wizTestResult" hidden></span>
+          <span class="spacer"></span>
+          <span class="foot-hint">只发一条 <span class="mono">max_tokens=1</span> 的最小请求，不花多余 Token</span>
+        </div>
+      </section>
+
+      <!-- 第 3 步：登录 QQ -->
+      <section class="wiz-pane" data-wiz-pane="2">
+        <div class="login-status">
+          <span class="dot off lg" id="wizLoginDot"></span>
+          <div class="login-status-text">
+            <div class="login-phase" id="wizLoginPhase">未启动</div>
+            <div class="login-meta" id="wizLoginMeta">QQ：未登录 · 阶段 idle</div>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="wizLoginStart" type="button">
+            <svg class="icon sm"><use href="#i-play" xlink:href="#i-play"></use></svg>启动 / 重试
+          </button>
+        </div>
+
+        <div class="qr-area">
+          <div class="qr-frame">
+            <div class="qr-box" id="wizQrBox">
+              <img id="wizQrImg" alt="QQ 登录二维码" hidden>
+              <div class="qr-empty" id="wizQrEmpty">
+                <svg class="icon lg"><use href="#i-user" xlink:href="#i-user"></use></svg>
+                <span>暂无二维码</span>
+                <small>等待登录流程启动</small>
+              </div>
+            </div>
+            <div class="qr-caption">二维码保持白底黑块，未做任何滤镜处理</div>
+          </div>
+          <div class="qr-side">
+            <ol class="qr-steps">
+              <li>手机 QQ → 右上角「+」→ 扫一扫</li>
+              <li>扫描左侧二维码并在手机端确认登录</li>
+              <li>登录成功后，这里会显示当前登录的 QQ 号</li>
+            </ol>
+            <div class="kv" id="wizLoginKv"></div>
+          </div>
+        </div>
+
+        <div class="alert ok wiz-ok" id="wizLoginOk" hidden>
+          <svg class="icon sm"><use href="#i-check" xlink:href="#i-check"></use></svg>
+          <span id="wizLoginOkText">已登录</span>
+        </div>
+      </section>
+
+      <!-- 第 4 步：人设 -->
+      <section class="wiz-pane" data-wiz-pane="3">
+        <p class="wiz-lead">选一个人设，改好「名称」与「系统提示词」后保存。人设决定机器人是谁、怎么说话，之后可以在「人设配置」页继续调整。</p>
+        <div class="wiz-persona-layout">
+          <ul class="persona-list wiz-persona-list" id="wizPersonaList">
+            <li class="persona-empty-row">正在读取人设…</li>
+          </ul>
+
+          <div class="wiz-persona-edit" id="wizPersonaEdit" hidden>
+            <div class="form-grid wiz-form">
+              <label class="field span2">
+                <span class="field-label">名称</span>
+                <input class="input" id="wizPersonaName" type="text" maxlength="40" placeholder="例如：米蛋" spellcheck="false" autocomplete="off">
+              </label>
+              <label class="field span2">
+                <span class="field-label">系统提示词<span class="field-count" id="wizPromptCount">0 字</span></span>
+                <textarea class="textarea mono" id="wizPersonaPrompt" rows="6" spellcheck="false" placeholder="你是……（描述性格、称呼、说话风格与边界）"></textarea>
+              </label>
+            </div>
+            <div class="wiz-persona-foot">
+              <button class="btn primary sm" id="wizPersonaSave" type="button">保存</button>
+              <span class="foot-hint" id="wizPersonaHint"></span>
+            </div>
+          </div>
+
+          <div class="wiz-persona-empty" id="wizPersonaEmpty" hidden>请从左侧选择一个人设</div>
+        </div>
+      </section>
+
+      <!-- 第 5 步：完成 -->
+      <section class="wiz-pane" data-wiz-pane="4">
+        <p class="wiz-lead">下面是本次向导的配置结果，随时可以在左侧各个页面继续修改。</p>
+        <ul class="wiz-summary" id="wizSummary"></ul>
+        <p class="field-hint">点「开始使用」写入完成状态，下次启动就不再自动弹出向导。</p>
+      </section>
+
+    </div>
+
+    <div class="modal-foot wizard-foot">
+      <button class="btn danger" id="wizardQuit" type="button">
+        <svg class="icon sm"><use href="#i-logout" xlink:href="#i-logout"></use></svg>退出程序
+      </button>
+      <button class="btn ghost" id="wizardBack" type="button" hidden>上一步</button>
+      <span class="spacer"></span>
+      <span class="foot-hint" id="wizardFootHint"></span>
+      <button class="btn ghost" id="wizardSkip" type="button" hidden>稍后再说</button>
+      <button class="btn primary" id="wizardNext" type="button">下一步</button>
+      <button class="btn primary" id="wizardFinish" type="button" hidden>开始使用</button>
     </div>
   </div>
 </div>

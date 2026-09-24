@@ -95,6 +95,8 @@ class _State:
         self.sent: list[dict] = []
         self.pushed: list[dict] = []
         self.push_failures: list[str] = []
+        #: 图片/文件类动作（get_image / get_file），图片链路测试要看它
+        self.actions: list[dict] = []
 
     def next_message_id(self) -> int:
         with self.lock:
@@ -104,6 +106,10 @@ class _State:
     def record_sent(self, action: str, params: dict) -> None:
         with self.lock:
             self.sent.append({"action": action, "params": params, "at": time.time()})
+
+    def record_action(self, action: str, params: dict) -> None:
+        with self.lock:
+            self.actions.append({"action": action, "params": params, "at": time.time()})
 
     def record_push(self, payload: dict, error: str | None) -> None:
         with self.lock:
@@ -117,6 +123,7 @@ class _State:
                 "sent": list(self.sent),
                 "pushed": list(self.pushed),
                 "push_failures": list(self.push_failures),
+                "actions": list(self.actions),
             }
 
     def reset(self) -> None:
@@ -124,6 +131,7 @@ class _State:
             self.sent.clear()
             self.pushed.clear()
             self.push_failures.clear()
+            self.actions.clear()
 
 
 STATE = _State()
@@ -317,7 +325,41 @@ def _as_number(value: str) -> int | str:
 # --------------------------------------------------------------------------- #
 # OneBot 动作端口
 # --------------------------------------------------------------------------- #
-def make_handler(qq: str, token: str) -> type[BaseHTTPRequestHandler]:
+def sample_image_bytes() -> bytes:
+    """一张真实的 PNG（带颜色渐变，保证不是一坨纯色），供图片链路测试下载。
+
+    用 Pillow 生成而不是硬编码 base64：这样测的是"真的能解码一张图"，
+    而不是"能不能解开我们自己的常量"。
+    """
+    global _SAMPLE_CACHE
+    if _SAMPLE_CACHE is not None:
+        return _SAMPLE_CACHE
+    try:
+        import io
+
+        from PIL import Image
+
+        image = Image.new("RGB", (1200, 800))  # 故意比 1024 大，用来验证会缩放
+        pixels = image.load()
+        for y in range(0, 800, 4):
+            for x in range(0, 1200, 4):
+                color = (x % 256, y % 256, (x + y) % 256)
+                for dy in range(4):
+                    for dx in range(4):
+                        if x + dx < 1200 and y + dy < 800:
+                            pixels[x + dx, y + dy] = color
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        _SAMPLE_CACHE = buffer.getvalue()
+    except Exception:  # pragma: no cover - 没有 Pillow 时退回一个能解码的最小 PNG
+        _SAMPLE_CACHE = _png_bytes([[1] * 8 for _ in range(8)])
+    return _SAMPLE_CACHE
+
+
+_SAMPLE_CACHE: bytes | None = None
+
+
+def make_handler(qq: str, token: str, port: int = 0) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -351,6 +393,25 @@ def make_handler(qq: str, token: str) -> type[BaseHTTPRequestHandler]:
                 return
             if path == "/_qlark/health":
                 self._respond({"ok": True, "qq": qq})
+                return
+            if path == "/_qlark/sample.png":
+                # 供图片链路测试下载：一张真实的 PNG（不是假数据）
+                payload = sample_image_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if path == "/_qlark/slow.png":
+                # 用来测超时保护：先睡一会儿再回
+                time.sleep(float(os.environ.get("FAKE_NAPCAT_SLOW_SECONDS", "5")))
+                payload = sample_image_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
                 return
             self._respond({"status": "failed", "retcode": 1404, "message": "not found"})
 
@@ -415,6 +476,22 @@ def make_handler(qq: str, token: str) -> type[BaseHTTPRequestHandler]:
                 STATE.record_sent(action, params)
                 emit(f"[info] [Fake] 收到发送请求 {action}")
                 self._respond(_ok({"message_id": STATE.next_message_id()}))
+            elif action in ("get_image", "get_file"):
+                # 真 NapCat 支持它：图片段只有 file 没有 url 时，客户端靠这个接口
+                # 换到一个可下载的地址。随便编一个地址会让"立即下载"这条路测不到，
+                # 所以这里返回本假服务真实提供的一张图。
+                requested = str(params.get("file") or "")
+                STATE.record_action(action, params)
+                emit(f"[info] [Fake] {action} file={requested!r} -> /_qlark/sample.png")
+                self._respond(
+                    _ok(
+                        {
+                            "file": requested,
+                            "url": f"http://127.0.0.1:{port}/_qlark/sample.png",
+                            "file_size": len(sample_image_bytes()),
+                        }
+                    )
+                )
             else:
                 self._respond(
                     {"status": "failed", "retcode": 1404, "message": f"unknown action {action}"}
@@ -427,7 +504,7 @@ def make_handler(qq: str, token: str) -> type[BaseHTTPRequestHandler]:
 
 
 def serve_forever(port: int, qq: str, token: str) -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(qq, token))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(qq, token, port))
     emit(f"[info] [OneBot] [HTTP Server Adapter] Start On 127.0.0.1:{port}")
     server.serve_forever()
 
