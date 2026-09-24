@@ -14,6 +14,8 @@ NapCat 不会把消息推给我们（技术文档 §3.2）。所以必须再开�
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import threading
@@ -94,6 +96,8 @@ class EventServer:
                 ) from exc
 
             self._server = server
+            # 支持传 port=0 让系统分配，此时必须回读真实端口
+            self.port = server.server_port
             self._thread = threading.Thread(
                 target=server.serve_forever, name="qlark-events", daemon=True
             )
@@ -120,11 +124,26 @@ class EventServer:
         if self._logbus is not None:
             self._logbus.add(message, level=level, source=LogSource.QLARK.value)
 
-    def authorized(self, header: str | None) -> bool:
-        """校验 ``Authorization`` 头。未配置 token 时一律放行（仅限本机监听）。"""
+    def authorized(self, header: str | None, signature: str | None = None, body: bytes = b"") -> bool:
+        """校验鉴权。未配置 token 时一律放行（仅限本机监听）。
+
+        支持两种方式，缺一不可：
+
+        * ``Authorization: Bearer <token>`` —— OneBot 标准写法，也是我们测试用的；
+        * ``x-signature: sha1=<hex(sha1(token + 原始请求体))>`` —— **NapCat 的 httpClient
+          走的是这一种，它根本不发 ``Authorization``**。
+
+        第二条是踩过的坑：只认 ``Authorization`` 时 QLark 会把 NapCat 推来的**每一条事件
+        都回 401**，机器人表现为"在线但完全不回复"，而日志里只有 NapCat 侧的报错。
+        """
         if not self.token:
             return True
-        return header == f"Bearer {self.token}"
+        if header == f"Bearer {self.token}":
+            return True
+        if signature and signature.startswith("sha1="):
+            expected = hashlib.sha1(self.token.encode("utf-8") + body).hexdigest()
+            return hmac.compare_digest(signature[len("sha1=") :], expected)
+        return False
 
     def handle_payload(self, payload: dict[str, Any]) -> None:
         """处理一条事件（由 HTTP 线程调用，**必须立刻返回**）。"""
@@ -158,10 +177,15 @@ def _build_handler(owner: EventServer) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
-        def _send_empty(self, status: int) -> None:
-            self.send_response(status)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
+        def _send_ok(self) -> None:
+            """事件已受理。
+
+            回 ``200 {}`` 而不是 ``204 No Content``：RFC 7230 规定 **204 不允许带
+            Content-Length**，而 Python 的 ``send_response`` 总会让我们补一个
+            ``Content-Length: 0``。NapCat 用的 Node 解析器对这种响应很敏感，
+            空对象同时表示"没有快速操作"。
+            """
+            self._send_json(200, {})
 
         # ---------------------------------------------------------- 路由
         def do_GET(self) -> None:  # noqa: N802
@@ -181,22 +205,36 @@ def _build_handler(owner: EventServer) -> type[BaseHTTPRequestHandler]:
                     pass
 
         def _handle_post(self) -> None:
-            if not owner.authorized(self.headers.get("Authorization")):
-                owner.rejected += 1
-                self._send_json(401, {"ok": False, "error": "unauthorized"})
-                return
-
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = 0
+            too_big = length > MAX_BODY_BYTES
 
-            if length <= 0 or length > MAX_BODY_BYTES:
+            # **必须先把请求体读干净，再进入任何分支。**
+            #
+            # 否则在 keep-alive 连接上，没读走的请求体会残留在缓冲区里，被当成
+            # 下一个请求的请求行。NapCat 用同一条连接连续推事件，实测结果是它的
+            # Node 解析器彻底错乱，报 `Parse Error: Expected HTTP/`。
+            # 之前"鉴权失败就早退"正好踩中这条：所有事件都被 401 且都没读体。
+            raw = b""
+            if too_big:
+                # 太大就不读了，但必须断开这条连接，避免残留字节污染后续请求
+                self.close_connection = True
+            elif length > 0:
+                raw = self.rfile.read(length)
+
+            signature = self.headers.get("X-Signature")
+            if not owner.authorized(self.headers.get("Authorization"), signature, raw):
+                owner.rejected += 1
+                self._send_json(401, {"ok": False, "error": "unauthorized"})
+                return
+
+            if too_big or length <= 0:
                 owner.invalid += 1
                 self._send_json(400, {"ok": False, "error": "bad content-length"})
                 return
 
-            raw = self.rfile.read(length)
             try:
                 payload = json.loads(raw.decode("utf-8", errors="replace"))
             except ValueError:
@@ -211,7 +249,7 @@ def _build_handler(owner: EventServer) -> type[BaseHTTPRequestHandler]:
 
             # 先入队再应答：入队是非阻塞的，绝不能在这里做耗时工作
             owner.handle_payload(payload)
-            self._send_empty(204)
+            self._send_ok()
 
     return Handler
 

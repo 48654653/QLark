@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import struct
@@ -227,7 +228,12 @@ def event_endpoint(qq: str) -> tuple[str, str] | None:
 
 
 def push_event(payload: dict) -> bool:
-    """把一条事件 POST 给 QLark 的事件服务。"""
+    """把一条事件 POST 给 QLark 的事件服务。
+
+    **鉴权方式必须和真身一致**：真 NapCat 的 httpClient 不发 ``Authorization``，
+    而是发 ``x-signature: sha1=<hex(sha1(token + 原始请求体))>``。
+    替身以前用的是 Bearer，于是"事件被 401 全拒"这个真实故障在测试里永远复现不了。
+    """
     endpoint = event_endpoint(QQ)
     if endpoint is None:
         STATE.record_push(payload, "未配置 httpClients，事件无法推送")
@@ -236,8 +242,10 @@ def push_event(payload: dict) -> bool:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=body, method="POST")
     request.add_header("Content-Type", "application/json")
+    request.add_header("x-self-id", str(QQ))
     if token:
-        request.add_header("Authorization", f"Bearer {token}")
+        digest = hashlib.sha1(token.encode("utf-8") + body).hexdigest()
+        request.add_header("x-signature", f"sha1={digest}")
     # 绕开系统代理：Windows 的 ProxyOverride 白名单在 Python 里不生效，
     # 不显式禁用的话连 127.0.0.1 的请求都会被丢给代理
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
