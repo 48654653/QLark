@@ -323,6 +323,21 @@
               <span class="field-hint">范围 0 – 2，越大越发散</span>
               <span class="field-err" id="eTemperature" hidden></span>
             </label>
+
+            <label class="field">
+              <span class="field-label">模型思考强度</span>
+              <select class="input" id="mThinkingMode">
+                <option value="off">关闭（推荐）</option>
+                <option value="auto">自动</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+                <option value="max">最高</option>
+                <option value="">跟随服务端默认</option>
+              </select>
+              <span class="field-hint" id="thinkingHint">部分模型（如 DeepSeek）**默认就在思考**，一条闲聊回复有八成以上输出 token 花在推理上，而且**思考模式下温度设置是无效的**。默认关闭，省钱又快</span>
+              <span class="field-err" id="eThinkingMode" hidden></span>
+            </label>
           </div>
 
           <div class="panel-foot">

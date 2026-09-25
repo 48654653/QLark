@@ -58,6 +58,14 @@ SUMMARY_SYSTEM_PROMPT = (
 SUMMARY_TEMPERATURE = 0.3
 #: 摘要输出的 token 上限（300 汉字 ≈ 450 token，留足余量）
 SUMMARY_MAX_TOKENS = 800
+#: 总结任务的最低输出预算。
+#:
+#: 不能直接沿用对话的 ``max_tokens``（用户可能设成 512 甚至更小），因为
+#: **推理 token 也算进这个预算**。实测：开着思考时，一次 4000 字符的压缩
+#: 恰好把 512 全用在 reasoning 上，``finish_reason=length`` 且正文为空 ——
+#: 摘要永远压不出来，原文无限堆积。
+#: 关掉思考是根治（见 pipeline._llm_summary），这里是第二道保险。
+SUMMARY_MIN_TOKENS = 512
 #: 交给总结模型的材料长度上限（字符）。
 #:
 #: 必须有：W 可以设到 200，而单条消息最长可以到 5000 字 —— 200 轮 × 2 条 × 5000 字
@@ -229,7 +237,22 @@ class Summarizer:
         text = truncate_summary(result.text)
         if not text:
             self.store.set_summary_pending(key, True)
-            self._log("记忆压缩返回空内容，已标记待重试（原文保留）", level="warn")
+            # 空内容有好几种成因，日志必须写清楚是哪一种 ——
+            # 只写"返回空内容"会让人完全无从下手（真踩过：查了半天才发现
+            # 是推理 token 把 max_tokens 吃光了，finish_reason=length）。
+            reason = ""
+            if (result.finish_reason or "").lower() == "length":
+                reason = (
+                    f"；**被 max_tokens 截断**（finish_reason=length，"
+                    f"completion={result.completion_tokens}）"
+                    "—— 若其中大部分是推理 token，说明该模型的思考没关掉"
+                )
+            elif result.finish_reason:
+                reason = f"；finish_reason={result.finish_reason}"
+            self._log(
+                f"记忆压缩返回空内容，已标记待重试（原文保留）{reason}",
+                level="warn",
+            )
             return SummaryOutcome(
                 status="empty",
                 rounds=rounds,

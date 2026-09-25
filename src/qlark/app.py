@@ -15,7 +15,7 @@ from .bot import BotService
 from .chat.memes import MemeLibrary
 from .chat.memes import resolve_dir as resolve_meme_dir
 from .chat.personas import PersonaError
-from .chat.reply_format import build_output_rules, build_preview
+from .chat.reply_format import FORMAT_REMINDER, build_output_rules, build_preview
 from .chat.store import MessageStore
 from .chat.summarizer import SUMMARY_MAX_CHARS
 from .core.models import AppState, Phase
@@ -255,6 +255,8 @@ class Application:
             system_prompt=str(persona.get("system_prompt") or ""),
             rules=rules,
             enabled_note=note,
+            # 预览按"掷中"画，所以格式提醒也要画出来 —— 否则和实际发出去的不一致
+            reminder=FORMAT_REMINDER if rules else "",
         )
         return {"ok": True, **blocks_and_note}
 

@@ -25,6 +25,7 @@ def build_chat_messages(
     history: Iterable[tuple[str, str]] = (),
     user_content: str | list[dict[str, Any]],
     extra_system: Sequence[str] = (),
+    trailing_system: str = "",
 ) -> list[dict[str, Any]]:
     """拼装请求体里的 ``messages`` 数组。
 
@@ -34,6 +35,12 @@ def build_chat_messages(
         history: ``(role, content)`` 序列，按时间正序。
         user_content: 本轮用户消息。字符串，或已是多模态数组（M5 图片理解用）。
         extra_system: 额外插入的 system 块（M4 的长期记忆摘要走这里）。
+        trailing_system: **插在历史之后、用户消息之前**的一条 system。
+
+            必须放在这个位置、而不能并进开头那坨 system —— 实测：
+            格式要求离生成点隔了二十来条消息时，会被历史里"助手自己一直用
+            散文说话"的示范盖过，模型照旧输出散文。搬到最后一条之后，
+            成功率从 0% 升到 83%。
     """
     messages: list[dict[str, Any]] = []
 
@@ -49,6 +56,9 @@ def build_chat_messages(
         if not text:
             continue
         messages.append({"role": role, "content": text})
+
+    if trailing_system and trailing_system.strip():
+        messages.append({"role": "system", "content": trailing_system.strip()})
 
     messages.append({"role": "user", "content": user_content})
     return messages

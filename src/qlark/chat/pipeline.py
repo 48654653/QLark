@@ -46,13 +46,20 @@ from .moderation import RateLimiter, find_blocked_word
 from .personas import PersonaStore
 from .queue import SessionQueue
 from .reply_format import (
+    FORMAT_REMINDER,
+    append_reminder,
     build_output_rules,
     compose_memory_text,
     parse_reply,
     salvage,
 )
 from .store import MessageStore, memory_key
-from .summarizer import SUMMARY_MAX_TOKENS, SUMMARY_TEMPERATURE, Summarizer
+from .summarizer import (
+    SUMMARY_MAX_TOKENS,
+    SUMMARY_MIN_TOKENS,
+    SUMMARY_TEMPERATURE,
+    Summarizer,
+)
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +78,18 @@ RETRY_INSTRUCTION = (
     "请**只**输出一个 JSON 对象，不要有任何解释文字，也不要用 ``` 代码块包裹。"
     '格式：{{"messages": ["你要说的话"], "meme": "表情名"}}'
 )
+
+
+def _preview(text: str | None, limit: int = 240) -> str:
+    """把模型输出压成一行、截断，用于日志。
+
+    **解析失败时必须把原文记下来** —— 只记「不是合法 JSON」等于什么都没说，
+    事后完全没法判断是模型没听指令、返回了空、还是格式差一点点。
+    """
+    flat = " ".join(str(text or "").split())
+    if not flat:
+        return "（空内容）"
+    return flat if len(flat) <= limit else flat[:limit] + "…"
 
 
 @dataclass
@@ -468,8 +487,16 @@ class MessagePipeline:
             split_prompt=str(persona.get("split_prompt") or ""),
             meme_prompt=str(persona.get("meme_prompt") or ""),
         )
+        trailing_system = ""
         if rules:
             extra_system.append(rules)
+            # 双保险：同一句提醒放**两处** —— 历史之后的 system、以及用户消息文本末尾。
+            #
+            # 为什么非放两处：只放末尾 system 实测约 83%，剩下的失败集中在
+            # "模型特别想表达"的那几句（辞职、相亲、工资）。两处都放 30/30 = 100%。
+            # 详见 reply_format.FORMAT_REMINDER 的说明。
+            trailing_system = FORMAT_REMINDER
+            user_content = append_reminder(user_content)
 
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆
         history = self.store.recent_rounds(key, rounds)
@@ -480,6 +507,7 @@ class MessagePipeline:
             history=history,
             user_content=user_content,
             extra_system=extra_system,
+            trailing_system=trailing_system,
         )
 
         started = time.monotonic()
@@ -657,11 +685,22 @@ class MessagePipeline:
             self._attach_meme(plan)
             return plan
 
+        # 被 max_tokens 截断导致的"格式不对"要单独说清楚：
+        # 这种情况重试同样的长度毫无意义，得让用户去调大上限。
+        if (result.finish_reason or "").lower() == "length":
+            self._log(
+                f"输出被 max_tokens 截断（finish_reason=length），JSON 不完整。"
+                f"建议在「模型配置」里调大「最大 Token」（当前 {self.settings.get('max_tokens')}）；"
+                f"截断内容：{_preview(parsed.raw, 120)}",
+                level="error",
+            )
+
         # ① 重新生成：**把"错在哪"告诉它**，否则它很可能原样再错一遍
         attempts = self.settings.reply_retry_max
         for index in range(attempts):
             self._log(
-                f"输出不是合法 JSON（{parsed.error}），重新生成（{index + 1}/{attempts}）",
+                f"输出不是合法 JSON（{parsed.error}），重新生成（{index + 1}/{attempts}）；"
+                f"模型原文：{_preview(parsed.raw)}",
                 level="warn",
             )
             retry_messages = [
@@ -700,7 +739,10 @@ class MessagePipeline:
         plan.degraded = f"JSON 解析失败（{parsed.error}），且无可抢救内容"
         plan.texts = [self.settings.reply_fallback_text]
         plan.meme = None
-        self._log(f"{plan.degraded}，已发送兜底文案", level="error")
+        self._log(
+            f"{plan.degraded}，已发送兜底文案；模型原文：{_preview(parsed.raw)}",
+            level="error",
+        )
         return plan
 
     def _attach_meme(self, plan: ReplyPlan) -> None:
@@ -814,7 +856,11 @@ class MessagePipeline:
         if temperature is None:
             temperature = self.settings.get("temperature")
 
-        signature = (base_url, api_key, model, str(max_tokens), str(temperature))
+        thinking = str(self.settings.get("thinking_mode") or "")
+
+        signature = (
+            base_url, api_key, model, str(max_tokens), str(temperature), thinking,
+        )
         cached = self._llm_cache
         if cached is not None and cached[0] == signature:
             return cached[1]
@@ -824,6 +870,7 @@ class MessagePipeline:
             model,
             max_tokens=max_tokens,
             temperature=temperature,
+            thinking=thinking,
         )
         self._llm_cache = (signature, client)
         return client
@@ -923,7 +970,12 @@ class MessagePipeline:
         if cached is not None and cached[0] == signature:
             return cached[1]
         client = OpenAIChatClient(
-            base_url, api_key, model, max_tokens=max_tokens, temperature=temperature
+            base_url,
+            api_key,
+            model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            thinking=str(self.settings.get("thinking_mode") or ""),
         )
         self._vision_cache = (signature, client)
         return client
@@ -948,7 +1000,13 @@ class MessagePipeline:
             configured = int(self.settings.get("max_tokens") or 0)
         except (TypeError, ValueError):
             configured = 0
-        max_tokens = min(configured, SUMMARY_MAX_TOKENS) if configured > 0 else SUMMARY_MAX_TOKENS
+        # 下限别省：这个预算是**推理 + 正文**共用的，太小的话推理一挤就什么都不剩，
+        # 摘要永远压不出来（实测 512 被 reasoning 全部吃掉，正文为空）。
+        max_tokens = (
+            max(SUMMARY_MIN_TOKENS, min(configured, SUMMARY_MAX_TOKENS))
+            if configured > 0
+            else SUMMARY_MAX_TOKENS
+        )
 
         client = OpenAIChatClient(
             base_url,
@@ -956,6 +1014,8 @@ class MessagePipeline:
             model,
             max_tokens=max_tokens,
             temperature=SUMMARY_TEMPERATURE,
+            # 摘要是有标准答案的机械任务，花推理 token 纯属浪费
+            thinking="off",
         )
         self._summary_cache = (signature, client)
         return client

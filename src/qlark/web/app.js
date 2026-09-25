@@ -100,6 +100,7 @@
     mSummary: $('mSummary'), eSummary: $('eSummary'),
     mMaxTokens: $('mMaxTokens'), eMaxTokens: $('eMaxTokens'),
     mTemperature: $('mTemperature'), eTemperature: $('eTemperature'),
+    mThinkingMode: $('mThinkingMode'), eThinkingMode: $('eThinkingMode'), thinkingHint: $('thinkingHint'),
     btnModelApply: $('btnModelApply'), btnModelTest: $('btnModelTest'), modelTestResult: $('modelTestResult'),
 
     napcatRestartTag: $('napcatRestartTag'), btnNapcatRestart: $('btnNapcatRestart'),
@@ -1002,6 +1003,7 @@
     summary_model: ['mSummary', 'eSummary'],
     max_tokens: ['mMaxTokens', 'eMaxTokens'],
     temperature: ['mTemperature', 'eTemperature'],
+    thinking_mode: ['mThinkingMode', 'eThinkingMode'],
     memory_rounds: ['bMemoryRounds', 'eMemoryRounds'],
     max_reply_chars: ['bMaxReplyChars', 'eMaxReplyChars'],
     reply_quote_group: ['bQuoteGroup', null],
@@ -1122,6 +1124,7 @@
       summary_model: asStr(s.summary_model),
       max_tokens: numOr(s.max_tokens, 4096),
       temperature: numOr(s.temperature, 1),
+      thinking_mode: asStr(s.thinking_mode) || 'off',
       onebot_host: asStr(s.onebot_host) || '127.0.0.1',
       onebot_port: numOr(s.onebot_port, 3000),
       event_host: asStr(s.event_host) || '127.0.0.1',
@@ -1181,6 +1184,10 @@
     dom.mSummary.value = cfg.summary_model;
     dom.mMaxTokens.value = String(cfg.max_tokens);
     dom.mTemperature.value = String(cfg.temperature);
+    // 思考强度：对不上已知取值就退回"关闭"（旧配置可能是任意值）
+    var THINKING_VALUES = ['off', 'auto', 'low', 'medium', 'high', 'max', ''];
+    dom.mThinkingMode.value = THINKING_VALUES.indexOf(cfg.thinking_mode) >= 0
+      ? cfg.thinking_mode : 'off';
 
     // API Key 永不回填明文：只把掩码放到 placeholder
     dom.mApiKey.value = '';
@@ -1256,6 +1263,7 @@
       payload.summary_model = dom.mSummary.value.trim();
       payload.max_tokens = inputNum(dom.mMaxTokens);
       payload.temperature = inputNum(dom.mTemperature);
+      payload.thinking_mode = String(dom.mThinkingMode.value || '');
     }
     payload.memory_rounds = inputNum(dom.bMemoryRounds);
     payload.reply_quote_group = !!dom.bQuoteGroup.checked;
@@ -3806,6 +3814,7 @@
         summary_model: '',
         max_tokens: 4096,
         temperature: 1,
+        thinking_mode: 'off',
         onebot_host: '127.0.0.1',
         onebot_port: 3000,
         event_host: '127.0.0.1',

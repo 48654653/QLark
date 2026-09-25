@@ -161,6 +161,53 @@ def _flatten_content(content: Any) -> str:
     return "" if content is None else str(content)
 
 
+#: 「思考强度」选项 → 请求体里的 ``thinking`` 片段。
+#:
+#: 这几个值是**实测**出来的（不是照抄文档）：直接发非法值给 DeepSeek，错误信息里
+#: 会列出它接受的全部取值 —— ``thinking.type`` 认 ``adaptive``/``enabled``/``disabled``。
+#:
+#: 空串 ``""`` = **不发送这个字段**，跟随服务端默认。
+#: 注意 DeepSeek 的默认是 ``enabled``（即默认就在思考），所以想省钱必须显式关掉。
+THINKING_PAYLOADS: dict[str, dict[str, Any]] = {
+    "off": {"type": "disabled"},
+    "auto": {"type": "adaptive"},
+    "low": {"type": "enabled", "reasoning_effort": "low"},
+    "medium": {"type": "enabled", "reasoning_effort": "medium"},
+    "high": {"type": "enabled", "reasoning_effort": "high"},
+    "max": {"type": "enabled", "reasoning_effort": "max"},
+}
+
+#: 出现这些字样说明"服务端不认识这个参数"，据此自动降级
+_UNSUPPORTED_HINTS = (
+    "unsupported",
+    "unrecognized",
+    "unknown",
+    "not supported",
+    "unexpected",
+    "extra inputs",
+    "invalid_request_error",
+)
+
+
+def thinking_payload(mode: str | None) -> dict[str, Any] | None:
+    """把设置里的思考强度转成请求体片段；未知值/空值返回 ``None``（不发送）。"""
+    return THINKING_PAYLOADS.get(str(mode or "").strip().lower())
+
+
+def looks_like_thinking_unsupported(status: int | None, body: str) -> bool:
+    """判断这次失败是不是"服务端不认 thinking 参数"。
+
+    ``thinking`` 不是 OpenAI 标准字段。DeepSeek 会**静默忽略**不认识的字段，
+    但别的兼容服务可能直接报错 —— 那就得去掉它重试，不能让整次调用失败。
+    """
+    if status not in (400, 422):
+        return False
+    low = str(body or "").lower()
+    if "thinking" not in low and "reasoning_effort" not in low:
+        return False
+    return any(hint in low for hint in _UNSUPPORTED_HINTS)
+
+
 class OpenAIChatClient:
     """极简的 OpenAI 兼容客户端。"""
 
@@ -173,6 +220,7 @@ class OpenAIChatClient:
         timeout: float = 60.0,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        thinking: str | None = None,
         session: requests.Session | None = None,
     ) -> None:
         self.base_url = base_url
@@ -181,6 +229,9 @@ class OpenAIChatClient:
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.temperature = temperature
+        #: 思考强度（``off``/``auto``/``low``/``medium``/``high``/``max``）。
+        #: 服务端明确表示不支持时会被就地清成 ``None``，之后不再发送。
+        self.thinking = thinking
         self._session = session or requests.Session()
 
     # ------------------------------------------------------------------ 校验
@@ -214,12 +265,40 @@ class OpenAIChatClient:
             payload["max_tokens"] = int(self.max_tokens)
         if self.temperature is not None:
             payload["temperature"] = float(self.temperature)
+        extra = thinking_payload(self.thinking)
+        if extra is not None:
+            payload["thinking"] = extra
 
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
 
+        try:
+            return self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+        except LLMError as exc:
+            # 服务端不认 thinking 参数 → 去掉它再来一轮，并**记住**别再发。
+            # `thinking` 不是 OpenAI 标准字段：DeepSeek 会静默忽略未知字段，
+            # 但别的兼容服务可能直接 400/422，不能让整次调用就这么失败。
+            if "thinking" not in payload or not looks_like_thinking_unsupported(
+                exc.status, str(exc)
+            ):
+                raise
+            log.warning("服务端不支持 thinking 参数，已自动去掉并重试一次：%s", exc)
+            payload.pop("thinking", None)
+            self.thinking = None
+            return self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+
+    def _request_loop(
+        self,
+        endpoint: str,
+        payload: dict[str, Any],
+        messages: Sequence[dict[str, Any]],
+        headers: dict[str, str],
+        retries: int,
+        backoff: float,
+    ) -> ChatResult:
+        """带退避重试的请求循环。**会就地修改传入的 payload**（例如去掉参数）。"""
         attempts = max(1, int(retries) + 1)
         last_error: LLMError | None = None
         for index in range(attempts):
@@ -275,9 +354,11 @@ class OpenAIChatClient:
         if status >= 500:
             raise LLMError(LLMErrorKind.SERVER, f"服务端错误（HTTP {status}）", status=status)
         if status != 200:
+            # 多截一点：兼容降级要靠这段文本判断"是不是参数不支持"，
+            # 200 字符有时会在关键信息之前就断掉
             raise LLMError(
                 LLMErrorKind.BAD_RESPONSE,
-                f"意外状态码 HTTP {status}：{response.text[:200]}",
+                f"意外状态码 HTTP {status}：{response.text[:400]}",
                 status=status,
             )
 

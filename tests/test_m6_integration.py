@@ -103,9 +103,13 @@ def test_rate_limit_logs_a_clear_reason(ready, fake_openai: FakeOpenAI) -> None:
     _send(ready, "第二句", message_id=1211)
     assert wait_for(lambda: ready.bot.pipeline.stats.rate_limited >= 1, timeout=20)
 
-    lines = [line.text for line in ready.logbus.tail(4000)]
-    assert any("达到上限" in text for text in lines), "限流必须留下可读的原因"
-    assert any("秒后恢复" in text for text in lines), "要告诉用户多久恢复"
+    # 统计和日志不是原子的：pipeline 里先 `stats.rate_limited += 1` 再 `_log(...)`，
+    # 所以看到统计变化就立刻读日志会有空窗。等日志本身出现，而不是等统计。
+    def logged(keyword: str) -> bool:
+        return any(keyword in line.text for line in ready.logbus.tail(4000))
+
+    assert wait_for(lambda: logged("达到上限"), timeout=10), "限流必须留下可读的原因"
+    assert wait_for(lambda: logged("秒后恢复"), timeout=10), "要告诉用户多久恢复"
 
 
 def test_zero_disables_rate_limit(ready, fake_openai: FakeOpenAI) -> None:

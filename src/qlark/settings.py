@@ -80,6 +80,12 @@ DEFAULTS: dict[str, Any] = {
     "reply_retry_max": 1,
     #: 重试用尽后的兜底文案
     "reply_fallback_text": "服务器宕机了喵",
+    #: 模型思考强度：off / auto / low / medium / high / max（空串 = 不发送，跟随服务端默认）
+    #:
+    #: **默认 off**。实测 DeepSeek 的默认是「开思考」，而一次闲聊回复里有
+    #: 86% 的输出 token 花在推理上；关掉之后输出 token 直接减半，成功率不变。
+    #: 另外官方明确「temperature 在思考模式下无效」——不关掉的话温度设置是摆设。
+    "thinking_mode": "off",
     #: 首启向导是否已完成（M6）
     "first_run_done": False,
     #: 用户是否已确认"QQ 机器人存在风控/封号风险"（需求规格 §9.3）

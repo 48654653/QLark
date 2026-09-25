@@ -53,6 +53,36 @@ SINGLE_MESSAGE_RULE = "messages：必填，**只能写 1 条**，就是你要说
 #: 没开表情时必须明确禁止，否则模型可能自己加一个
 NO_MEME_RULE = "不要输出 meme 键。"
 
+#: 掷中时要额外补的一句极短提醒，**放两处**（末尾 system + 用户消息文本末尾）。
+#:
+#: 这是实测出来的做法。原来【输出规则】排在消息开头，离生成点隔了二十来条
+#: 历史消息，而那些历史里助手自己的回复全是散文 —— 模型就继续写散文，
+#: JSON 解析失败率高达 26%，加多少措辞、怎么降温都没用。
+#: 把同一句话挪到生成点附近：单放末尾 system 约 83%，**两处都放 30/30 = 100%**。
+#:
+#: 注意措辞要**短而平**。"必须/任何...都不允许"这种强硬写法实测反而更差（70~80%）。
+FORMAT_REMINDER = "（提醒：只输出那个 JSON 对象，不要写别的话。）"
+
+
+def append_reminder(content: Any, reminder: str = FORMAT_REMINDER) -> Any:
+    """把提醒接到用户消息**文本的末尾**；多模态时只动 text 段，图片段不碰。"""
+    text = str(reminder or "").strip()
+    if not text:
+        return content
+    if isinstance(content, str):
+        return f"{content}\n\n{text}" if content.strip() else text
+    if isinstance(content, list):
+        parts = [dict(part) for part in content]
+        for part in parts:
+            if part.get("type") == "text":
+                existing = str(part.get("text") or "").rstrip()
+                part["text"] = f"{existing}\n\n{text}" if existing else text
+                return parts
+        # 多模态里没有 text 段（只发了图）→ 补一段
+        parts.insert(0, {"type": "text", "text": text})
+        return parts
+    return content
+
 
 # --------------------------------------------------------------------------- #
 # 内置提示词模板
@@ -489,13 +519,17 @@ def build_preview(
     system_prompt: str,
     rules: str,
     enabled_note: str,
+    reminder: str = "",
     sample_message_id: str = "示例",
 ) -> dict[str, Any]:
     """拼出"即将发给 AI 的全部内容"的预览。
 
     纯函数，方便测试与复用。真正发请求时的消息顺序是：
 
-    ``system(人设) → system(输出规则) → system(长期记忆摘要) → 历史 → user(当前消息)``
+    ``system(人设+规则+摘要) → 历史 → system(格式提醒) → user(当前消息+格式提醒)``
+
+    ``reminder`` 非空时要**如实画在两处** —— 预览如果和实际发出去的不一致，
+    那它比没有还糟。
     """
     blocks: list[dict[str, str]] = [
         {
@@ -515,17 +549,22 @@ def build_preview(
             "content": "（每个会话一份，由自动压缩生成；这里只做占位）",
         }
     )
-    blocks.append(
-        {
-            "role": "user",
-            "title": "用户消息（示例）",
-            "content": (
-                "昵称：毛糙蛋\n时间：2026-9-25 19:30\n消息：早上好啊"
-                if sample_message_id
-                else ""
-            ),
-        }
+    if reminder:
+        blocks.append(
+            {
+                "role": "system",
+                "title": "格式提醒（紧挨用户消息，位置刻意靠后）",
+                "content": reminder,
+            }
+        )
+
+    user_body = (
+        "昵称：毛糙蛋\n时间：2026-9-25 19:30\n消息：早上好啊" if sample_message_id else ""
     )
+    if reminder and user_body:
+        user_body = f"{user_body}\n\n{reminder}"
+    blocks.append({"role": "user", "title": "用户消息（示例）", "content": user_body})
+
     return {
         "blocks": blocks,
         "note": enabled_note,
@@ -536,6 +575,7 @@ def build_preview(
 
 
 __all__ = [
+    "FORMAT_REMINDER",
     "MEME_PRESETS",
     "MEME_RULE_DEFAULT",
     "OUTPUT_RULES_TITLE",
@@ -543,6 +583,7 @@ __all__ = [
     "SPLIT_RULE_DEFAULT",
     "SUGGESTED_MESSAGE_CHARS",
     "ParsedReply",
+    "append_reminder",
     "build_output_rules",
     "build_preview",
     "compose_memory_text",

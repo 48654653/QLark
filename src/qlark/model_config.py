@@ -17,6 +17,10 @@ from typing import Any
 
 from . import paths
 from .chat.memes import MemeLibrary, resolve_dir as resolve_meme_dir
+from .llm.client import THINKING_PAYLOADS
+
+#: 允许的「思考强度」取值。空串 = 不发送该字段，跟随服务端默认。
+THINKING_MODES: tuple[str, ...] = ("", *THINKING_PAYLOADS)
 
 from .chat.moderation import normalize_words
 from .llm.client import LLMError, OpenAIChatClient, normalize_base_url
@@ -33,6 +37,7 @@ MODEL_FIELDS = (
     "summary_model",
     "max_tokens",
     "temperature",
+    "thinking_mode",
     "memory_rounds",
     "auto_summary",
     "reply_quote_group",
@@ -84,6 +89,7 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "summary_model": str(settings.get("summary_model") or ""),
         "max_tokens": settings.get("max_tokens"),
         "temperature": settings.get("temperature"),
+        "thinking_mode": str(settings.get("thinking_mode") or ""),
         "memory_rounds": settings.get("memory_rounds"),
         "auto_summary": bool(settings.get("auto_summary")),
         "reply_quote_group": bool(settings.get("reply_quote_group")),
@@ -175,6 +181,11 @@ def validate_model(payload: dict[str, Any], current: dict[str, Any]) -> dict[str
             errors["temperature"] = "温度不能为空" if _is_blank(payload["temperature"]) else "温度必须是数字"
         elif not 0.0 <= value <= 2.0:
             errors["temperature"] = "温度必须在 0~2 之间"
+
+    if "thinking_mode" in payload:
+        mode = str(payload["thinking_mode"] or "").strip().lower()
+        if mode not in THINKING_MODES:
+            errors["thinking_mode"] = "思考强度取值不合法"
 
     if "memory_rounds" in payload:
         value = _as_int(payload["memory_rounds"])
@@ -289,6 +300,8 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["max_tokens"] = _as_int(payload["max_tokens"])
     if "temperature" in payload:
         updates["temperature"] = _as_float(payload["temperature"])
+    if "thinking_mode" in payload:
+        updates["thinking_mode"] = str(payload["thinking_mode"] or "").strip().lower()
     if "memory_rounds" in payload:
         updates["memory_rounds"] = _as_int(payload["memory_rounds"])
     if "max_reply_chars" in payload:
