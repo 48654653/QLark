@@ -20,7 +20,7 @@
 可用环境变量：
 
 ===============================  ==============================================
-``FAKE_NAPCAT_QQ``               账号（默认 2157649443）
+``FAKE_NAPCAT_QQ``               账号（默认 10001）
 ``FAKE_NAPCAT_PORT``             OneBot 动作端口（默认 3000）
 ``FAKE_NAPCAT_TOKEN``            token（默认 qlark-local）
 ``FAKE_NAPCAT_HAVE_CRED``        设为 ``1`` 表示本机有登录凭据，快速登录可成功
@@ -56,7 +56,7 @@ import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-QQ = os.environ.get("FAKE_NAPCAT_QQ", "2157649443")
+QQ = os.environ.get("FAKE_NAPCAT_QQ", "10001")
 PORT = int(os.environ.get("FAKE_NAPCAT_PORT", "3000"))
 TOKEN = os.environ.get("FAKE_NAPCAT_TOKEN", "qlark-local")
 HAVE_CRED = os.environ.get("FAKE_NAPCAT_HAVE_CRED", "0") == "1"

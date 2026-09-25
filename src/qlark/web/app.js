@@ -3595,10 +3595,10 @@
       };
 
       var b = {
-        memory_key: 'private:2157649443:p2',
-        session_id: 'private:2157649443',
+        memory_key: 'private:10001:p2',
+        session_id: 'private:10001',
         session_type: 'private',
-        session_ref: '2157649443',
+        session_ref: '10001',
         persona_uid: 2,
         persona_name: '严谨助手',
         updated_at: NOW - 640,
@@ -3827,9 +3827,9 @@
       accounts: {
         current: null,
         accounts: [
-          { qq: '2157649443', nickname: '米蛋', has_credential: true, known_by_qlark: true },
+          { qq: '10001', nickname: '米蛋', has_credential: true, known_by_qlark: true },
           { qq: '1000123456', nickname: '小号 · 测试', has_credential: true, known_by_qlark: false },
-          { qq: '3558997120', nickname: null, has_credential: false, known_by_qlark: false }
+          { qq: '10003', nickname: null, has_credential: false, known_by_qlark: false }
         ]
       },
 
@@ -3855,7 +3855,7 @@
         }
       ],
       persona_default_uid: 1,
-      persona_permission: { whitelist_only: true, whitelist: ['2157649443', '1000123456'] },
+      persona_permission: { whitelist_only: true, whitelist: ['10001', '1000123456'] },
 
       /* M4：记忆配置 + 记忆（预览数据） */
       memory_config: {

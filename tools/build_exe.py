@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +33,74 @@ RUNTIME = ROOT / "runtime" / "napcat"
 
 #: 表情包素材支持的图片格式（与 qlark.chat.memes.SUPPORTED_SUFFIXES 保持一致）
 MEME_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+
+#: 运行时里**必须清掉**的个人数据（相对 ``runtime/napcat`` 的 glob）。
+#:
+#: 这些全是程序跑起来之后自己写进去的：QQ 号、登录态、WebUI 访问 token、
+#: 登录二维码、日志、NapCat 自己的库。装到别人机器上会重新生成，
+#: **但跟着包发出去就等于把开发者的账号信息一起发了**。
+#:
+#: 注意 ``napcat/config/napcat.json`` **不在**列表里 —— 那是 NapCat 的通用默认配置，
+#: 不含账号信息，留着反而省事（下划线通配匹配不到它）。
+RUNTIME_PERSONAL_GLOBS = (
+    "napcat/config/onebot11_*.json",  # 文件名带 QQ 号，内容带 token
+    "napcat/config/onebot11_*.json.bak.*",  # 上面那个的历史备份，同样带 QQ 号和 token
+    "napcat/config/napcat_*.json",  # 文件名带 QQ 号
+    "napcat/config/napcat_protocol_*.json",  # 同上
+    "napcat/config/webui.json",  # 含 WebUI 访问 token，且默认监听所有网卡
+    "napcat/cache/*",  # 登录二维码等
+    "napcat/logs/*",
+    "guild1.db",  # NapCat 自己的库，含账号数据
+    "guild1.db-shm",
+    "guild1.db-wal",
+    "*.log",
+)
+
+#: 文件名里带 QQ 号的模式（QQ 号按 5~11 位数字算）
+_QQ_FILE_RE = re.compile(r"^(onebot11|napcat|napcat_protocol)_\d{5,11}\.json", re.IGNORECASE)
+
+
+def sanitize_runtime(dest: Path) -> int:
+    """删掉运行时里属于**开发者本人**的数据。返回清理项数。
+
+    目录本身保留（程序要用），只清空里面的内容。
+    """
+    removed = 0
+    for pattern in RUNTIME_PERSONAL_GLOBS:
+        for path in dest.glob(pattern):
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                    path.mkdir(parents=True, exist_ok=True)  # 目录留着
+                else:
+                    path.unlink()
+                removed += 1
+            except OSError as exc:  # pragma: no cover - 文件被占用之类的
+                print(f"  [warn] 清理失败 {path}：{exc}")
+    print(f"已清理运行时里的个人数据：{removed} 项")
+    return removed
+
+
+def verify_clean(dest: Path) -> list[str]:
+    """发版前核对产物里没有个人数据。返回问题清单，空列表表示干净。"""
+    problems: list[str] = []
+    for path in dest.rglob("*"):
+        rel = path.relative_to(dest).as_posix()
+        name = path.name
+        if _QQ_FILE_RE.match(name):
+            problems.append(f"文件名含 QQ 号：{rel}")
+        if rel.endswith("napcat/config/webui.json"):
+            problems.append(f"WebUI 配置（含访问 token）：{rel}")
+        if name.startswith("guild1.db"):
+            problems.append(f"NapCat 的数据库（含账号数据）：{rel}")
+        if not path.is_file():
+            continue
+        if path.suffix.lower() == ".log":
+            problems.append(f"日志文件：{rel}")
+        if "/napcat/cache/" in f"/{rel}":
+            problems.append(f"缓存文件（可能是登录二维码）：{rel}")
+    return problems
+
 
 #: 打包产物里必须存在的文件（少一个都说明打包漏了东西）
 REQUIRED = [
@@ -92,6 +162,53 @@ def check() -> int:
     return 0
 
 
+#: 冒烟检查要导入的模块（覆盖主链路）
+SMOKE_MODULES = (
+    "qlark.__main__",
+    "qlark.app",
+    "qlark.bot",
+    "qlark.napcat.patterns",
+    "qlark.chat.pipeline",
+    "qlark.chat.reply_format",
+    "qlark.chat.memes",
+    "qlark.web",
+)
+
+
+def smoke_check() -> list[str]:
+    """打包前先把主链路导入一遍。返回问题清单（空 = 通过）。
+
+    **为什么必须有这一步**：纯语法/导入错误（正则写坏、少个逗号、名字打错）
+    在这里一秒就能抓到，不用等打包完、启动崩溃才发现 —— 而打包版一崩，
+    用户看到的就是"双击没反应"，连报错都看不见。
+
+    这条是拿真实事故换来的：一次发版前的文本替换把正则 ``\\d{5,12}`` 改成了
+    ``\\d{5,00}``，``re.compile`` 在导入期就抛异常。当时改完源码没跑测试、
+    直接打包，直到启动测试才炸出来。跑一遍导入只要一秒，别再省这一秒。
+    """
+    code = "; ".join(f"import {name}" for name in SMOKE_MODULES)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=str(ROOT),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover
+        return [f"冒烟检查跑不起来：{exc}"]
+    if result.returncode == 0:
+        return []
+    tail = (result.stderr or "").strip().splitlines()
+    return [f"导入 {len(SMOKE_MODULES)} 个主链路模块失败：", *tail[-12:]]
+
+
 def copy_memes(dest: Path) -> None:
     """把源码目录的 ``memes/`` 拷进产物（用户放的表情包素材）。
 
@@ -122,6 +239,15 @@ def copy_memes(dest: Path) -> None:
 
 
 def build(*, with_runtime: bool, clean: bool) -> int:
+    # 先冒烟：源码都导入不了就别浪费两分钟去打包了
+    smoke = smoke_check()
+    if smoke:
+        print("[FAIL] 冒烟检查未通过，源码有问题：")
+        for line in smoke:
+            print(f"  {line}")
+        return 1
+    print("冒烟检查通过（主链路模块都能导入）。")
+
     if clean:
         for path in (ROOT / "build", ROOT / "dist"):
             if path.exists():
@@ -175,11 +301,27 @@ def build(*, with_runtime: bool, clean: bool) -> int:
             print(f"\n[FAIL] 复制后有 {bad} 处不一致，产物不可用")
             return 1
         print("复制完整性核验通过（文件数与体积一致）。")
+
+        # 拷完立刻清个人数据 —— 放在核验之后，免得"核验通过"掩盖了清理动作
+        sanitize_runtime(target)
     else:
         print(
             "\n警告：产物里**不含** NapCat 运行时（--no-runtime）。"
             "\n      目标机器上把 NapCat 运行时放到 dist\\QLark\\runtime\\napcat 才能用。"
         )
+
+    # 发版前的最后一道关：确认产物里没有个人数据。
+    # **必须有这一步** —— 清理逻辑将来可能被改动或漏掉某个新文件，
+    # 而"把开发者的 QQ 号和 token 发出去"是发版事故里最难挽回的一种。
+    problems = verify_clean(DIST)
+    if problems:
+        print(f"\n[FAIL] 产物里发现 {len(problems)} 处个人数据，不能发版：")
+        for item in problems[:30]:
+            print(f"  - {item}")
+        if len(problems) > 30:
+            print(f"  … 还有 {len(problems) - 30} 处")
+        return 1
+    print("个人数据检查通过（没有 QQ 号文件名、登录态、WebUI token、缓存、日志）。")
 
     total = sum(f.stat().st_size for f in DIST.rglob("*") if f.is_file())
     print(f"\n产物目录：{DIST}")
