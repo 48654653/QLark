@@ -33,6 +33,7 @@ MODEL_FIELDS = (
     "memory_rounds",
     "auto_summary",
     "reply_quote_group",
+    "group_prefix_sender",
     "max_reply_chars",
     "notify_error_private",
     # ---- 风控（需求规格 §9.3）----
@@ -72,6 +73,7 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "memory_rounds": settings.get("memory_rounds"),
         "auto_summary": bool(settings.get("auto_summary")),
         "reply_quote_group": bool(settings.get("reply_quote_group")),
+        "group_prefix_sender": bool(settings.get("group_prefix_sender", True)),
         "max_reply_chars": settings.get("max_reply_chars"),
         "notify_error_private": bool(settings.get("notify_error_private")),
         "rate_limit_per_minute": settings.get("rate_limit_per_minute"),
@@ -252,6 +254,8 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["auto_summary"] = bool(payload["auto_summary"])
     if "reply_quote_group" in payload:
         updates["reply_quote_group"] = bool(payload["reply_quote_group"])
+    if "group_prefix_sender" in payload:
+        updates["group_prefix_sender"] = bool(payload["group_prefix_sender"])
     # 界面用的键名是 error_notice_private，内部存的是 notify_error_private —— 两个都收
     if "error_notice_private" in payload:
         updates["notify_error_private"] = bool(payload["error_notice_private"])

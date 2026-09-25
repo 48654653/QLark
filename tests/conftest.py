@@ -221,11 +221,47 @@ def _wait_http(url: str, timeout: float = 20.0) -> None:
     raise RuntimeError(f"服务未在 {timeout:.0f}s 内就绪：{url}")
 
 
+def _with_retry(call, *, attempts: int = 4, delay: float = 0.2):
+    """重试**瞬时连接错误**。返回 ``call()`` 的结果，重试用尽则抛最后一个异常。
+
+    为什么需要：集成测试会同时开着好几个本地 HTTP 服务（假 NapCat、假 OpenAI、
+    事件服务），满负载时 Windows 偶发 ``ConnectionAbortedError 10053`` ——
+    实测大约三次全量跑就会碰到一次，而且每次挂的用例都不一样。
+    那是环境抖动（本机 TCP 层还有已知异常：SYN 被丢弃、代理劫持回环），
+    不是被测行为。把它当失败会让整个套件变得不可信。
+
+    对 POST 也重试是安全的：控制面接口要么幂等（``/_qlark/reset``），
+    要么重复投递会被消息去重挡掉（``/_qlark/inject`` 用 ``session#message_id`` 去重）。
+    """
+    import http.client
+    import time as _time
+    import urllib.error
+
+    last: Exception | None = None
+    for index in range(max(1, attempts)):
+        try:
+            return call()
+        except (
+            ConnectionError,
+            http.client.HTTPException,
+            urllib.error.URLError,
+            OSError,
+        ) as exc:
+            last = exc
+            if index + 1 < attempts:
+                _time.sleep(delay * (index + 1))
+    assert last is not None
+    raise last
+
+
 def _get(url: str) -> dict:
     import json as _json
 
-    with _local_opener().open(url, timeout=10) as response:
-        return _json.loads(response.read().decode("utf-8"))
+    def once() -> dict:
+        with _local_opener().open(url, timeout=10) as response:
+            return _json.loads(response.read().decode("utf-8"))
+
+    return _with_retry(once)
 
 
 def _post(url: str, payload: dict | None = None) -> dict:
@@ -233,11 +269,15 @@ def _post(url: str, payload: dict | None = None) -> dict:
     import urllib.request
 
     body = _json.dumps(payload or {}).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST")
-    request.add_header("Content-Type", "application/json")
-    with _local_opener().open(request, timeout=10) as response:
-        raw = response.read().decode("utf-8")
-    return _json.loads(raw) if raw else {}
+
+    def once() -> dict:
+        request = urllib.request.Request(url, data=body, method="POST")
+        request.add_header("Content-Type", "application/json")
+        with _local_opener().open(request, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+        return _json.loads(raw) if raw else {}
+
+    return _with_retry(once)
 
 
 def wait_for(predicate, timeout: float = 30.0, interval: float = 0.1) -> bool:

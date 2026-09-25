@@ -33,9 +33,15 @@ DEFAULTS: dict[str, Any] = {
     "bot_paused": False,
     "max_concurrent": 4,
     "dedup_window": 600,
-    "reply_quote_group": True,
+    #: 群聊回复是否引用原消息。默认关：群里引用会让消息看着很吵，
+    #: 而且 @ 机器人时本来就上下文清楚，不需要靠引用定位。
+    "reply_quote_group": False,
     "max_reply_chars": 900,
     "notify_error_private": True,
+    #: 群聊里是否在消息前带上发送者名字（``小明：你好呀``）。
+    #: **强烈建议保持开启**：一个群共用一份记忆，不带名字的话模型分不清
+    #: 哪句是谁说的，会把 A 的偏好记到 B 头上。私聊不加（只有一个人）。
+    "group_prefix_sender": True,
     "ignored_users": [],
     "ignored_groups": [],
     # ---- 记忆 / 人设（M4）----
@@ -236,6 +242,13 @@ class Settings:
         except (TypeError, ValueError):
             return 4
 
+    @max_concurrent.setter
+    def max_concurrent(self, value: int | str) -> None:
+        try:
+            self.set("max_concurrent", max(1, min(16, int(value))))
+        except (TypeError, ValueError):
+            self.set("max_concurrent", 4)
+
     @property
     def dedup_window(self) -> int:
         try:
@@ -243,9 +256,28 @@ class Settings:
         except (TypeError, ValueError):
             return 600
 
+    @dedup_window.setter
+    def dedup_window(self, value: int | str) -> None:
+        try:
+            self.set("dedup_window", max(30, int(value)))
+        except (TypeError, ValueError):
+            self.set("dedup_window", 600)
+
     @property
     def reply_quote_group(self) -> bool:
-        return bool(self.get("reply_quote_group", True))
+        return bool(self.get("reply_quote_group", False))
+
+    @reply_quote_group.setter
+    def reply_quote_group(self, value: bool) -> None:
+        self.set("reply_quote_group", bool(value))
+
+    @property
+    def group_prefix_sender(self) -> bool:
+        return bool(self.get("group_prefix_sender", True))
+
+    @group_prefix_sender.setter
+    def group_prefix_sender(self, value: bool) -> None:
+        self.set("group_prefix_sender", bool(value))
 
     @property
     def max_reply_chars(self) -> int:
@@ -254,9 +286,20 @@ class Settings:
         except (TypeError, ValueError):
             return 900
 
+    @max_reply_chars.setter
+    def max_reply_chars(self, value: int | str) -> None:
+        try:
+            self.set("max_reply_chars", max(100, int(value)))
+        except (TypeError, ValueError):
+            self.set("max_reply_chars", 900)
+
     @property
     def notify_error_private(self) -> bool:
         return bool(self.get("notify_error_private", True))
+
+    @notify_error_private.setter
+    def notify_error_private(self, value: bool) -> None:
+        self.set("notify_error_private", bool(value))
 
     def id_set(self, key: str) -> set[str]:
         """把配置里的 QQ / 群号列表读成字符串集合（兼容数字与字符串两种写法）。"""

@@ -441,7 +441,17 @@
                 <span class="switch-track"><span class="switch-thumb"></span></span>
                 <span class="switch-text">回复时引用被回复的消息</span>
               </label>
-              <span class="field-hint">仅影响群聊，私聊不受影响</span>
+              <span class="field-hint">仅影响群聊，私聊不受影响。群里引用会让消息看着比较吵，默认关闭</span>
+            </div>
+
+            <div class="field">
+              <span class="field-label">群聊带上发送者名字</span>
+              <label class="switch">
+                <input type="checkbox" id="bPrefixSender">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">把消息写成「小明：你好呀」</span>
+              </label>
+              <span class="field-hint">一个群共用一份记忆，不带名字的话机器人分不清哪句是谁说的，会把 A 的偏好记到 B 头上。私聊不加</span>
             </div>
 
             <div class="field">

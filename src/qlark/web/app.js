@@ -114,7 +114,8 @@
 
     bMemoryRounds: $('bMemoryRounds'), eMemoryRounds: $('eMemoryRounds'),
     bMaxReplyChars: $('bMaxReplyChars'), eMaxReplyChars: $('eMaxReplyChars'),
-    bQuoteGroup: $('bQuoteGroup'), bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
+    bQuoteGroup: $('bQuoteGroup'), bPrefixSender: $('bPrefixSender'),
+    bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
 
     /* ----- M6：风控设置（对话行为） ----- */
     bRateLimit: $('bRateLimit'), eRateLimit: $('eRateLimit'),
@@ -975,6 +976,7 @@
     memory_rounds: ['bMemoryRounds', 'eMemoryRounds'],
     max_reply_chars: ['bMaxReplyChars', 'eMaxReplyChars'],
     reply_quote_group: ['bQuoteGroup', null],
+    group_prefix_sender: ['bPrefixSender', null],
     error_notice_private: ['bErrorNotice', null],
     // M6：风控
     rate_limit_per_minute: ['bRateLimit', 'eRateLimit'],
@@ -1089,6 +1091,7 @@
       memory_rounds: numOr(s.memory_rounds, 20),
       auto_summary: (s.auto_summary === undefined || s.auto_summary === null) ? null : !!s.auto_summary,
       reply_quote_group: asBool(s.reply_quote_group, false),
+      group_prefix_sender: asBool(s.group_prefix_sender, true),
       max_reply_chars: numOr(s.max_reply_chars, 500),
       error_notice_private: asBool(noticeRaw, true),
       rate_limit_per_minute: numOr(s.rate_limit_per_minute, 0),
@@ -1160,6 +1163,7 @@
     dom.bMemoryRounds.value = String(cfg.memory_rounds);
     dom.bMaxReplyChars.value = String(cfg.max_reply_chars);
     dom.bQuoteGroup.checked = !!cfg.reply_quote_group;
+    dom.bPrefixSender.checked = !!cfg.group_prefix_sender;
     dom.bErrorNotice.checked = !!cfg.error_notice_private;
     dom.bRateLimit.value = String(cfg.rate_limit_per_minute);
     dom.bBlockedWords.value = cfg.blocked_words.join('\n');
@@ -1200,6 +1204,7 @@
     }
     payload.memory_rounds = inputNum(dom.bMemoryRounds);
     payload.reply_quote_group = !!dom.bQuoteGroup.checked;
+    payload.group_prefix_sender = !!dom.bPrefixSender.checked;
     payload.max_reply_chars = inputNum(dom.bMaxReplyChars);
     payload.error_notice_private = !!dom.bErrorNotice.checked;
     // M6：风控（textarea 每行一个词 → 数组）
@@ -3522,7 +3527,8 @@
         token_masked: 'ql••••••3k',
         memory_rounds: 20,
         auto_summary: true,
-        reply_quote_group: true,
+        reply_quote_group: false,
+        group_prefix_sender: true,
         max_reply_chars: 500,
         error_notice_private: true,
         // M6：风控
@@ -3871,6 +3877,7 @@
         if (p.memory_rounds !== undefined && p.memory_rounds !== null) cfg.memory_rounds = Number(p.memory_rounds);
         if (p.max_reply_chars !== undefined && p.max_reply_chars !== null) cfg.max_reply_chars = Number(p.max_reply_chars);
         if (p.reply_quote_group !== undefined) cfg.reply_quote_group = !!p.reply_quote_group;
+        if (p.group_prefix_sender !== undefined) cfg.group_prefix_sender = !!p.group_prefix_sender;
         if (p.error_notice_private !== undefined) cfg.error_notice_private = !!p.error_notice_private;
         if (p.auto_summary !== undefined) cfg.auto_summary = !!p.auto_summary;
         // M6：风控（blocked_words 允许数组，也容忍整段换行文本）

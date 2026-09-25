@@ -326,9 +326,13 @@ class MessagePipeline:
             return
 
         persona = self.personas.get(persona_uid) or {}
-        memory_text: str = parsed.text_for_memory() or (
+        speaker = self._speaker_prefix(event)
+        base_text: str = parsed.text_for_memory() or (
             IMAGE_PLACEHOLDER if parsed.has_image else ""
         )
+        # 群聊：把说话人写进内容本身。这一条同时作用于"发给模型的当前消息"和
+        # "落库的历史"，两边保持一致，模型回看历史时也能分清谁说了什么。
+        memory_text = f"{speaker}：{base_text}" if speaker and base_text else base_text
 
         # 风控两条都放在调用模型**之前**：既然要拦，就别先花掉一次 token
         blocked_word = find_blocked_word(memory_text, self.settings.get("blocked_words") or [])
@@ -362,6 +366,8 @@ class MessagePipeline:
         if prepared:
             # 多模态：文本里那条 [图片] 占位要去掉，否则模型会看到"占位 + 真图"
             visible = _strip_image_placeholders(parsed.text) or "请看这张图片。"
+            if speaker:
+                visible = f"{speaker}：{visible}"
             user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
         else:
             user_content = memory_text
@@ -422,6 +428,32 @@ class MessagePipeline:
 
         # 回复已经发出去了，压缩放在最后：它慢一点也不会让用户多等
         self._maybe_summarize(key)
+
+    # ------------------------------------------------------------------ 群聊
+    def _speaker_prefix(self, event: MessageEvent) -> str:
+        """群聊里给消息加上发送者名字，私聊返回空串。
+
+        为什么必须加：一个群**共用一份记忆**（需求规格 §6.1），所有人的话都落在
+        同一条上下文里。不带名字的话模型看到的是
+
+            user: 你好呀 / assistant: 你好！ / user: 我不吃香菜
+
+        它根本不知道这三句分别是谁说的 —— 会把 A 的忌口记到 B 头上，也没法回答
+        "刚才谁说要吃什么"。加上名字之后历史本身就是清楚的。
+
+        私聊不加：那里只有一个人，加了纯属浪费 token。
+        """
+        if not event.is_group:
+            return ""
+        if not bool(self.settings.get("group_prefix_sender", True)):
+            return ""
+        raw = str(event.sender_name or "").strip()
+        if not raw:
+            return ""
+        # 名字里带换行/制表会破坏 "名字：内容" 这个结构；顺手限个长度，
+        # 免得有人用超长昵称把每条消息都撑大
+        cleaned = " ".join(raw.split())[:32]
+        return cleaned.strip("：: ").strip()
 
     # ------------------------------------------------------------------ 记忆
     def _context_budget(self) -> int:

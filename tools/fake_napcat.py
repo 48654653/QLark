@@ -311,10 +311,16 @@ def build_message_event(
     at_bot: bool = True,
     segments: list[dict] | None = None,
     nickname: str = "测试用户",
+    card: str = "",
     role: str = "member",
     message_id: int | None = None,
 ) -> dict:
-    """构造一条 OneBot 11 消息事件。"""
+    """构造一条 OneBot 11 消息事件。
+
+    ``card`` 是群名片：真 NapCat 在群消息里会带上它（没设名片时是空串），
+    而 QLark 取发送者名字时**名片优先于昵称**。替身以前把它写死成空串，
+    于是"名片优先"这条逻辑在测试里根本走不到。
+    """
     if segments is None:
         segments = []
         if message_type == "group" and at_bot:
@@ -336,7 +342,7 @@ def build_message_event(
         "sender": {
             "user_id": _as_number(user_id),
             "nickname": nickname,
-            "card": "",
+            "card": card,
             "role": role,
         },
     }
@@ -463,6 +469,7 @@ def make_handler(qq: str, token: str, port: int = 0) -> type[BaseHTTPRequestHand
                     at_bot=bool(body.get("at_bot", True)),
                     segments=body.get("segments"),
                     nickname=str(body.get("nickname") or "测试用户"),
+                    card=str(body.get("card") or ""),
                     role=str(body.get("role") or "member"),
                     message_id=body.get("message_id"),
                 )

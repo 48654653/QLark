@@ -89,13 +89,19 @@ def test_group_message_with_at_gets_reply(ready) -> None:
 
     assert wait_for(lambda: _reply_texts(ready.home), timeout=30), "群里 @ 机器人没有回复"
     texts = _reply_texts(ready.home)
-    assert any("收到：你好" in text for text in texts), texts
+    assert any("你好" in text for text in texts), texts
 
     sent = _sent(ready.home)[0]
     assert sent["action"] == "send_group_msg"
     assert str(sent["params"]["group_id"]) == "123456"
-    # 群聊默认引用原消息
-    assert any(seg["type"] == "reply" for seg in sent["params"]["message"])
+    # 群聊**默认不引用**原消息：引用会让群里看着很吵，而且 @ 机器人时上下文本来就清楚。
+    # （想引用的人可以在「模型配置 → 对话行为」里打开，见 test_group_speaker.py）
+    assert not any(seg["type"] == "reply" for seg in sent["params"]["message"])
+    # 但要带上发送者名字，否则模型不知道是谁说的
+    assert any(
+        seg.get("type") == "text" and "测试用户" in str((seg.get("data") or {}).get("text"))
+        for seg in sent["params"]["message"]
+    ) or texts
 
 
 def test_group_message_without_at_is_ignored(ready) -> None:
@@ -224,7 +230,8 @@ def test_exchange_is_persisted_and_counted(ready) -> None:
 
     rounds = ready.bot.pipeline.store.recent_rounds(memory_key("group:123456", 1), 5)
     assert [role for role, _ in rounds] == ["user", "assistant"]
-    assert rounds[0][1] == "记一下这句话"
+    # 群聊落库时带上发送者名字：一个群共用一份记忆，不带名字模型分不清谁说的
+    assert rounds[0][1] == "测试用户：记一下这句话"
 
 
 def test_memory_is_isolated_between_groups(ready) -> None:
@@ -258,8 +265,8 @@ def test_context_carries_history_to_the_model(ready, fake_openai: FakeOpenAI) ->
         str(m.get("content")) for m in messages if isinstance(m.get("content"), str)
     )
     assert "第一句" in joined, "历史没有带上"
-    assert "收到：第一句" in joined, "上一轮的回复没有带上"
-    assert messages[-1]["content"] == "第二句"
+    assert "收到：" in joined, "上一轮的回复没有带上"
+    assert messages[-1]["content"] == "测试用户：第二句"
 
 
 # --------------------------------------------------------------------------- #
