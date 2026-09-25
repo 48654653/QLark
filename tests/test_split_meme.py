@@ -165,21 +165,51 @@ def test_output_rules_split_only() -> None:
     assert "【输出规则】" in rules
     assert "messages" in rules
     assert "最多 2 条" in rules
-    assert "多数时候请只写 1 条" in rules
     assert "不要输出 meme 键" in rules
+
+
+def test_output_rules_are_directive_not_permissive() -> None:
+    """**骰子已经掷过了，规则必须是命令式。**
+
+    踩过的坑：第一版写的是"默认只写 1 条 / 多数时候不要填"，模型老老实实照办 ——
+    骰子明明掷中了，实际触发率还是接近 0。随机该由代码负责，提示词一旦开了口子，
+    频率就失控。这条测试就是防止再写回去。
+    """
+    split_rules = build_output_rules(split=True, max_messages=2, meme=False, emotions=[])
+    assert "本轮请写成 2 条" in split_rules
+    for bad in ("多数时候请只写 1 条", "默认只写 1 条", "想补一句的时候"):
+        assert bad not in split_rules, f"又写回了许可式措辞：{bad!r}"
+
+    meme_rules = build_output_rules(split=False, max_messages=2, meme=True, emotions=["开心"])
+    assert "本轮请配一个表情" in meme_rules
+    for bad in ("多数时候不要填", "想配一个表情时才填"):
+        assert bad not in meme_rules, f"又写回了许可式措辞：{bad!r}"
+
+
+def test_output_rules_split_limit_one_is_single() -> None:
+    """上限设成 1 时就是纯单条，不该再叫它拆。"""
+    rules = build_output_rules(split=True, max_messages=1, meme=False, emotions=[])
+    assert "只能写 1 条" in rules
+    assert "本轮请写成 2 条" not in rules
 
 
 def test_output_rules_meme_only() -> None:
     rules = build_output_rules(split=False, max_messages=2, meme=True, emotions=["哭哭", "害羞"])
     assert "只能写 1 条" in rules
     assert "哭哭、害羞" in rules
-    assert "多数时候不要填" in rules
+    assert "本轮请配一个表情" in rules
 
 
 def test_output_rules_both() -> None:
     rules = build_output_rules(split=True, max_messages=3, meme=True, emotions=["开心"])
     assert "最多 3 条" in rules
     assert "开心" in rules
+
+
+def test_output_rules_max_is_a_range_not_a_fixed_two() -> None:
+    """上限调大后，规则里要跟着变成 2~N，而不是写死两条。"""
+    rules = build_output_rules(split=True, max_messages=5, meme=False, emotions=[])
+    assert "最多 5 条" in rules
 
 
 # --------------------------------------------------------------------------- #

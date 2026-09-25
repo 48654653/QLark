@@ -59,27 +59,42 @@ def build_output_rules(
 
     两个功能都关时返回**空串** —— 一个字都不提，模型自然输出普通文本。
     这是"关掉之后不会被带跑"的第一道保障。
+
+    .. important::
+       **骰子已经掷过了，这里是命令式，不是许可式。**
+
+       踩过的坑：第一版写的是"默认只写 1 条 / 多数时候不要填"，
+       结果模型老老实实照办 —— 骰子明明掷中了，它还是只发一条、不配表情，
+       实际触发率接近 0。**随机该由代码负责，提示词一旦开了口子，
+       频率就失控了**：要么像那样几乎不触发，要么（如果不加约束）每次都触发。
+       所以这里要直接说"请写成几条 / 请配一个表情"。
     """
     if not split and not meme:
         return ""
 
     lines: list[str] = [OUTPUT_RULES_TITLE]
-    lines.append("只输出一个 JSON 对象，不要有任何其它文字，也不要用代码块包裹。")
+    lines.append("你必须只输出一个 JSON 对象，不要有任何其它文字，也不要用代码块包裹。")
     lines.append('格式：{"messages": ["第一条"], "meme": "表情名"}')
     lines.append("")
 
     index = 1
     if split:
         limit = max(1, int(max_messages))
-        lines.append(f"{index}. messages：必填，你要说的话，每条一个字符串。")
-        lines.append(
-            f"   **默认只写 1 条。**只有在你情绪上来了、确实想补一句的时候，"
-            f"才写成 2 条（最多 {limit} 条）。多数时候请只写 1 条。"
-        )
-        lines.append(
-            f"   每条不超过 {SUGGESTED_MESSAGE_CHARS} 字，不要包含换行，"
-            "不要把一句话硬拆成两半。"
-        )
+        if limit <= 1:
+            lines.append(f"{index}. messages：必填，**只能写 1 条**，就是你要说的话。")
+        else:
+            lines.append(f"{index}. messages：必填，你要说的话，每条一个字符串。")
+            lines.append(
+                f"   **本轮请写成 2 条**（最多 {limit} 条）：一句话拆成两条来发，"
+                "像真人打字时想到什么又补一句那样。"
+            )
+            lines.append(
+                "   只有在这句话短到根本没法拆（比如「嗯」「好的」「在的」）时，才写成 1 条。"
+            )
+            lines.append(
+                f"   每条不超过 {SUGGESTED_MESSAGE_CHARS} 字，不要包含换行，"
+                "不要把一句话硬拆成两半。"
+            )
         index += 1
     else:
         lines.append(f"{index}. messages：必填，**只能写 1 条**，就是你要说的话。")
@@ -87,9 +102,11 @@ def build_output_rules(
 
     if meme:
         names = "、".join(str(name) for name in emotions)
-        lines.append(f"{index}. meme：选填，本轮想配一个表情时才填。")
-        lines.append(f"   只能从这些里选一个：{names}")
-        lines.append("   **多数时候不要填**，只在情绪明显时才配；不想配就整个键都不写。")
+        lines.append(f"{index}. meme：**本轮请配一个表情**，从这些里选一个：{names}")
+        lines.append(
+            "   要挑和你这句话情绪最贴合的那个。"
+            "只有当这句话完全不适合配任何表情时，才省略这个键。"
+        )
     else:
         lines.append(f"{index}. 不要输出 meme 键。")
 

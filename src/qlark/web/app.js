@@ -140,6 +140,7 @@
     pTempOverride: $('pTempOverride'), ePTempOverride: $('ePTempOverride'),
     pTokensOverride: $('pTokensOverride'), ePTokensOverride: $('ePTokensOverride'),
     pSplitEnabled: $('pSplitEnabled'), pMemeEnabled: $('pMemeEnabled'),
+    pSplitSwitchText: $('pSplitSwitchText'),
     btnPersonaSave: $('btnPersonaSave'), btnPersonaResetMemory: $('btnPersonaResetMemory'),
     personaEditHint: $('personaEditHint'),
     permStateTag: $('permStateTag'), permWhitelistOnly: $('permWhitelistOnly'),
@@ -1190,6 +1191,7 @@
     dom.bSplitMax.value = String(cfg.split_max_messages);
     dom.bSplitDelay.value = String(cfg.split_delay_ms);
     paintMemeDirHint(cfg);
+    paintSplitSwitchText();
     dom.bErrorNotice.checked = !!cfg.error_notice_private;
     dom.bRateLimit.value = String(cfg.rate_limit_per_minute);
     dom.bBlockedWords.value = cfg.blocked_words.join('\n');
@@ -1612,6 +1614,7 @@
     dom.pTokensOverride.value = (p.max_tokens_override === null) ? '' : String(p.max_tokens_override);
     dom.pSplitEnabled.checked = !!p.split_enabled;
     dom.pMemeEnabled.checked = !!p.meme_enabled;
+    paintSplitSwitchText();
 
     dom.btnPersonaSave.disabled = false;
     dom.btnPersonaResetMemory.disabled = false;
@@ -1703,6 +1706,13 @@
     }).catch(function () {
       setBusy(btn, false);
     });
+  }
+
+  /** 把"允许偶尔连发几条"写成真实范围，而不是写死"两条"。 */
+  function paintSplitSwitchText() {
+    if (!dom.pSplitSwitchText) return;
+    var max = (S.model && Number(S.model.split_max_messages)) || 2;
+    setText(dom.pSplitSwitchText, max > 2 ? ('允许偶尔连发 2~' + max + ' 条') : '允许偶尔连发 2 条');
   }
 
   function savePersona() {
