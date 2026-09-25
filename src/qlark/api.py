@@ -67,6 +67,17 @@ class JsApi:
     def test_model(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         return self._app.test_model(payload or {})
 
+    def choose_meme_dir(self) -> dict[str, Any]:
+        """弹出系统文件夹选择框挑表情目录。
+
+        取消选择时返回 ``{"ok": True, "path": ""}`` —— 不是错误，界面保持原值即可。
+        """
+        return self._app.choose_meme_dir()
+
+    def scan_meme_dir(self, path: str = "") -> dict[str, Any]:
+        """扫描目录，返回识别到的情绪清单（用于"配好了没"的即时反馈）。"""
+        return self._app.scan_meme_dir(str(path or ""))
+
     # ------------------------------------------------------------------ 账号
     def list_accounts(self) -> dict[str, Any]:
         return self._app.list_accounts()

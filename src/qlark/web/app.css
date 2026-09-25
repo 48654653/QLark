@@ -1140,6 +1140,15 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
 }
 .field-hint .mono { font-family: var(--font-mono); }
 
+/* 输入框 + 按钮同一行（例如「表情包目录」+「浏览…」） */
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row-inline .input { flex: 1 1 auto; min-width: 0; }
+.row-inline .btn { flex: 0 0 auto; white-space: nowrap; }
+
 .field-err {
   font-size: 11.5px;
   line-height: 1.6;

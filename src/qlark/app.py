@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 from . import paths
 from .bot import BotService
+from .chat.memes import MemeLibrary
+from .chat.memes import resolve_dir as resolve_meme_dir
 from .chat.personas import PersonaError
 from .chat.store import MessageStore
 from .chat.summarizer import SUMMARY_MAX_CHARS
@@ -151,6 +153,58 @@ class Application:
 
     def test_model(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         return model_config.test_model(self.settings, payload or {})
+
+    # ---------------------------------------------------- 表情目录（分段/表情包）
+    def _meme_library(self, path: str = "") -> MemeLibrary:
+        return MemeLibrary(resolve_meme_dir(path or self.settings.meme_dir, paths.app_dir() / "memes"))
+
+    def scan_meme_dir(self, path: str = "") -> dict[str, Any]:
+        """扫描表情目录，返回情绪清单。
+
+        界面用它做"配好了没"的即时反馈：路径填错、目录是空的、图片格式不支持，
+        都能立刻看出来，而不是等到机器人该发表情时才发现。
+        """
+        library = self._meme_library(path)
+        catalog = library.catalog()
+        return {
+            "ok": True,
+            "path": str(library.root or ""),
+            "exists": library.available,
+            "emotions": catalog,
+            "count": len(catalog),
+            "total": sum(catalog.values()),
+            "message": library.describe(),
+        }
+
+    def choose_meme_dir(self) -> dict[str, Any]:
+        """弹系统文件夹选择框。用户取消时返回空字符串（不是错误）。
+
+        pywebview 的 ``create_file_dialog`` 必须跑在**非创建窗口的那个线程**上；
+        js_api 的方法本来就在独立线程里执行，所以这里直接调是安全的。
+        """
+        window = self._window
+        if window is None:
+            return {"ok": False, "path": "", "error": "界面还没就绪，请手动填写路径"}
+
+        start = ""
+        library = self._meme_library()
+        if library.root and library.root.is_dir():
+            start = str(library.root)
+        try:
+            import webview  # 延迟导入：headless 模式不需要它
+
+            result = window.create_file_dialog(
+                webview.FOLDER_DIALOG,
+                directory=start or str(paths.app_dir()),
+            )
+        except Exception as exc:  # pragma: no cover - 依赖真实 GUI
+            log.warning("打开文件夹选择框失败：%s", exc)
+            return {"ok": False, "path": "", "error": f"打开文件夹选择框失败：{exc}"}
+
+        if not result:
+            return {"ok": True, "path": "", "cancelled": True}
+        selected = result[0] if isinstance(result, (list, tuple)) else result
+        return {"ok": True, "path": str(selected), "cancelled": False}
 
     # ================================================================== M3：账号
     def list_accounts(self) -> dict[str, Any]:

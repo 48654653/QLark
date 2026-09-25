@@ -111,6 +111,9 @@ class PersonaStore:
                     "model_override": row.get("model_override"),
                     "temperature_override": row.get("temperature_override"),
                     "max_tokens_override": row.get("max_tokens_override"),
+                    # 随机分段 / 表情包：人设级开关（"这个角色会不会这么做"）
+                    "split_enabled": bool(row.get("split_enabled")),
+                    "meme_enabled": bool(row.get("meme_enabled")),
                     "can_delete": uid != DEFAULT_PERSONA_UID,
                     "message_count": counts.get(uid, 0),
                 }
@@ -197,6 +200,10 @@ class PersonaStore:
             updates["system_prompt"] = str(fields["system_prompt"] or "")
         if "enabled" in fields:
             updates["enabled"] = 1 if fields["enabled"] else 0
+        if "split_enabled" in fields:
+            updates["split_enabled"] = 1 if fields["split_enabled"] else 0
+        if "meme_enabled" in fields:
+            updates["meme_enabled"] = 1 if fields["meme_enabled"] else 0
         if "avatar_path" in fields:
             updates["avatar_path"] = str(fields["avatar_path"] or "")
 

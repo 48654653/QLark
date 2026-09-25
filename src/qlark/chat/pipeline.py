@@ -13,12 +13,15 @@
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
+from .. import paths
 from ..core.models import LogSource
 from ..llm.client import ChatResult, LLMError, OpenAIChatClient
 from ..napcat.logbus import LogBus
@@ -38,9 +41,16 @@ from .images import (
     build_user_content,
     looks_like_vision_unsupported,
 )
+from .memes import MemeLibrary, resolve_dir as resolve_meme_dir
 from .moderation import RateLimiter, find_blocked_word
 from .personas import PersonaStore
 from .queue import SessionQueue
+from .reply_format import (
+    build_output_rules,
+    compose_memory_text,
+    parse_reply,
+    salvage,
+)
 from .store import MessageStore, memory_key
 from .summarizer import SUMMARY_MAX_TOKENS, SUMMARY_TEMPERATURE, Summarizer
 
@@ -54,6 +64,33 @@ SUMMARY_BLOCK_LABEL = "[长期记忆]"
 
 #: 默认上下文预算（字符数，粗估）
 DEFAULT_CONTEXT_BUDGET = 24000
+
+#: 输出格式不对时，第二次调用附在后面的纠正指令
+RETRY_INSTRUCTION = (
+    "你上一次的输出不是合法的 JSON（错误：{error}）。"
+    "请**只**输出一个 JSON 对象，不要有任何解释文字，也不要用 ``` 代码块包裹。"
+    '格式：{{"messages": ["你要说的话"], "meme": "表情名"}}'
+)
+
+
+@dataclass
+class ReplyPlan:
+    """这一轮到底要发什么。"""
+
+    texts: list[str]
+    meme: str | None = None
+    image_path: Path | None = None
+    #: 实际调用模型的次数（含重新生成）
+    calls: int = 1
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    #: 走到"抢救"或"兜底"时的原因，仅用于日志
+    degraded: str | None = None
+
+    @property
+    def memory_text(self) -> str:
+        """记忆里存什么：自然文本 + ``[表情：x]``，**不存 JSON**。"""
+        return compose_memory_text(self.texts, self.meme)
 
 
 def _strip_image_placeholders(text: str) -> str:
@@ -414,6 +451,19 @@ class MessagePipeline:
         summary_text = self.store.summary_text(key)
         extra_system = [f"{SUMMARY_BLOCK_LABEL} {summary_text}"] if summary_text else []
 
+        # 随机分段 / 表情包：**骰子必须在组装提示词之前掷**。
+        # 没掷中的那一项，它的规则块根本不进提示词 —— 模型不知道有这个能力，
+        # 自然就不会用。这比在提示词里写"请你不要每次都这样"可靠一百倍。
+        allow_split, allow_meme, emotions = self._roll_expression(persona)
+        rules = build_output_rules(
+            split=allow_split,
+            max_messages=self.settings.split_max_messages,
+            meme=allow_meme,
+            emotions=emotions,
+        )
+        if rules:
+            extra_system.append(rules)
+
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆
         history = self.store.recent_rounds(key, rounds)
         system_prompt = self.store.persona_prompt(persona_uid)
@@ -426,30 +476,44 @@ class MessagePipeline:
         )
 
         started = time.monotonic()
-        result = self._complete_with_vision_fallback(persona, messages, prepared, memory_text)
+        plan = self._plan_reply(
+            persona,
+            messages,
+            prepared,
+            memory_text,
+            allow_split=allow_split,
+            allow_meme=allow_meme,
+            emotions=emotions,
+        )
         elapsed = time.monotonic() - started
 
         self.db.bump_stats(
-            prompt_tokens=result.prompt_tokens,
-            completion_tokens=result.completion_tokens,
-            calls=1,
+            prompt_tokens=plan.prompt_tokens,
+            completion_tokens=plan.completion_tokens,
+            calls=plan.calls,
         )
         self.db.touch_session(event.session_id)
 
-        sent = self._sender().send_reply(event, result.text)
+        sent = self._sender().send_messages(
+            event,
+            plan.texts,
+            image=plan.image_path,
+            delay_ms=self.settings.split_delay_ms if len(plan.texts) > 1 else 0,
+        )
         if sent == 0:
             self._log("模型返回空回复，未发送", level="warn")
             return
 
         # 发送成功后才落库，保证记忆里不会出现"有问无答"的空洞。
-        # 注意存的是 memory_text（只含 [图片] 占位），**绝不能把 base64 写进记忆**。
+        # 注意存的是 memory_text（只含 [图片] 占位），**绝不能把 base64 写进记忆**；
+        # 机器人自己说的话存 plan.memory_text（自然文本 + [表情：x]），**不存 JSON**。
         self.store.append(
             key, "user", memory_text, has_image=parsed.has_image,
             msg_id=event.message_id, created_at=event.time or None,
         )
         self.store.append(
-            key, "assistant", result.text,
-            tokens=result.completion_tokens, created_at=event.time or None,
+            key, "assistant", plan.memory_text,
+            tokens=plan.completion_tokens, created_at=event.time or None,
         )
 
         self.stats.replied += 1
@@ -457,9 +521,14 @@ class MessagePipeline:
         self.stats.last_error = None
         self.db.bump_stats(msg_in=1, msg_out=sent)
 
+        detail = f"{sent} 条消息"
+        if plan.meme:
+            detail += f" + 表情「{plan.meme}」"
+        if plan.calls > 1:
+            detail += f"（重新生成 {plan.calls - 1} 次）"
         self._log(
             f"已回复 {event.session_id}（{elapsed:.1f}s，"
-            f"{result.prompt_tokens}+{result.completion_tokens} tokens，{sent} 条消息）"
+            f"{plan.prompt_tokens}+{plan.completion_tokens} tokens，{detail}）"
         )
 
         # 回复已经发出去了，压缩放在最后：它慢一点也不会让用户多等
@@ -488,6 +557,132 @@ class MessagePipeline:
         if not name:
             return text
         return build_labeled_message(name, event.time, text)
+
+    # ------------------------------------------------------- 随机分段 / 表情包
+    def _meme_library(self) -> MemeLibrary:
+        """表情库。设置里没配目录就用 ``<程序目录>/memes``。"""
+        return MemeLibrary(resolve_meme_dir(self.settings.meme_dir, paths.app_dir() / "memes"))
+
+    def _roll_expression(self, persona: dict[str, Any]) -> tuple[bool, bool, list[str]]:
+        """掷骰子决定这一轮允不允许分段 / 配表情。
+
+        **随机的关键在这里，不在提示词里。** 只要把规则发给模型，它几乎每次都会
+        用；没掷中时规则根本不进提示词，模型不知道有这个能力，自然就不用。
+
+        分段和表情**各自独立掷**：这样才能出现"只发一条但配个表情"这种自然行为。
+        """
+        split_on = bool(persona.get("split_enabled"))
+        meme_on = bool(persona.get("meme_enabled"))
+
+        emotions: list[str] = []
+        if meme_on:
+            emotions = self._meme_library().emotions()
+            if not emotions:
+                self._log(
+                    "人设启用了表情包，但表情目录里没有可用图片，本轮不配表情"
+                    f"（{self._meme_library().describe()}）",
+                    level="warn",
+                )
+                meme_on = False
+
+        allow_split = split_on and random.random() < self.settings.split_chance
+        allow_meme = meme_on and random.random() < self.settings.meme_chance
+        if allow_split:
+            self._log("本轮允许分段回复", level="debug")
+        if allow_meme:
+            self._log("本轮允许配表情", level="debug")
+        return allow_split, allow_meme, emotions
+
+    def _plan_reply(
+        self,
+        persona: dict[str, Any] | None,
+        messages: list[dict[str, Any]],
+        prepared: list[PreparedImage],
+        memory_text: str,
+        *,
+        allow_split: bool,
+        allow_meme: bool,
+        emotions: list[str],
+    ) -> ReplyPlan:
+        """调用模型 → 解析 → 重新生成 → 抢救 → 兜底，产出一份"要发什么"的计划。"""
+        spec = {
+            # 提示词里要求了 JSON 才按 JSON 校验；两个都关时模型就该输出普通文本
+            "expect_json": allow_split or allow_meme,
+            "allow_split": allow_split,
+            "allow_meme": allow_meme,
+            "max_messages": self.settings.split_max_messages,
+            "emotions": emotions,
+        }
+        result = self._complete_with_vision_fallback(persona, messages, prepared, memory_text)
+        parsed = parse_reply(result.text, **spec)
+        plan = ReplyPlan(
+            texts=[],
+            calls=1,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+        )
+        if parsed.ok:
+            plan.texts = parsed.messages
+            plan.meme = parsed.meme
+            self._attach_meme(plan)
+            return plan
+
+        # ① 重新生成：**把"错在哪"告诉它**，否则它很可能原样再错一遍
+        attempts = self.settings.reply_retry_max
+        for index in range(attempts):
+            self._log(
+                f"输出不是合法 JSON（{parsed.error}），重新生成（{index + 1}/{attempts}）",
+                level="warn",
+            )
+            retry_messages = [
+                *messages,
+                {"role": "assistant", "content": parsed.raw[:600]},
+                {"role": "user", "content": RETRY_INSTRUCTION.format(error=parsed.error)},
+            ]
+            try:
+                follow = self._complete_with_vision_fallback(
+                    persona, retry_messages, prepared, memory_text
+                )
+            except LLMError as exc:
+                self._log(f"重新生成失败，不再重试：{exc}", level="warn")
+                break
+            plan.calls += 1
+            plan.prompt_tokens += follow.prompt_tokens
+            plan.completion_tokens += follow.completion_tokens
+            parsed = parse_reply(follow.text, **spec)
+            if parsed.ok:
+                plan.texts = parsed.messages
+                plan.meme = parsed.meme
+                self._attach_meme(plan)
+                return plan
+
+        # ② 抢救：从坏 JSON 里把引号内容抠出来。大多数"少个逗号"都能救回来，
+        #    比直接甩一句"服务器宕机了"体面得多。
+        rescued = salvage(parsed.raw, max_messages=self.settings.split_max_messages)
+        if rescued:
+            plan.degraded = f"JSON 解析失败（{parsed.error}），已从原文抢救"
+            plan.texts = rescued
+            plan.meme = None
+            self._log(f"{plan.degraded}：{' / '.join(rescued)[:80]}", level="warn")
+            return plan
+
+        # ③ 兜底
+        plan.degraded = f"JSON 解析失败（{parsed.error}），且无可抢救内容"
+        plan.texts = [self.settings.reply_fallback_text]
+        plan.meme = None
+        self._log(f"{plan.degraded}，已发送兜底文案", level="error")
+        return plan
+
+    def _attach_meme(self, plan: ReplyPlan) -> None:
+        """按情绪名挑一张表情图；挑不到就静默不配（绝不能因此报错）。"""
+        if not plan.meme:
+            return
+        item = self._meme_library().pick(plan.meme)
+        if item is None:
+            self._log(f"表情「{plan.meme}」在目录里找不到，本轮不配图", level="warn")
+            plan.meme = None
+            return
+        plan.image_path = item.path
 
     # ------------------------------------------------------------------ 记忆
     def _context_budget(self) -> int:

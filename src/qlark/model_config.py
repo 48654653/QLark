@@ -15,6 +15,9 @@ import logging
 import time
 from typing import Any
 
+from . import paths
+from .chat.memes import MemeLibrary, resolve_dir as resolve_meme_dir
+
 from .chat.moderation import normalize_words
 from .llm.client import LLMError, OpenAIChatClient, normalize_base_url
 from .settings import Settings
@@ -39,6 +42,12 @@ MODEL_FIELDS = (
     # ---- 风控（需求规格 §9.3）----
     "rate_limit_per_minute",
     "blocked_words",
+    # 随机分段 / 表情包（"做得多频繁"是全局调参；"会不会做"在人设上）
+    "split_chance",
+    "split_max_messages",
+    "split_delay_ms",
+    "meme_chance",
+    "meme_dir",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -61,7 +70,12 @@ def mask(value: str | None) -> str:
 def snapshot(settings: Settings) -> dict[str, Any]:
     api_key = str(settings.get("api_key") or "")
     token = settings.onebot_token
+    # 表情目录的实际内容：界面要拿它显示"识别到 N 个情绪"，也能立刻发现路径配错
+    library = MemeLibrary(resolve_meme_dir(settings.meme_dir, paths.app_dir() / "memes"))
     return {
+        "meme_catalog": library.catalog(),
+        "meme_dir_effective": str(library.root or ""),
+        "meme_dir_available": library.available,
         "base_url": str(settings.get("base_url") or ""),
         "api_key_masked": mask(api_key),
         "api_key_set": bool(api_key),
@@ -78,6 +92,11 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "notify_error_private": bool(settings.get("notify_error_private")),
         "rate_limit_per_minute": settings.get("rate_limit_per_minute"),
         "blocked_words": list(settings.get("blocked_words") or []),
+        "split_chance": settings.split_chance,
+        "split_max_messages": settings.split_max_messages,
+        "split_delay_ms": settings.split_delay_ms,
+        "meme_chance": settings.meme_chance,
+        "meme_dir": settings.meme_dir,
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -180,6 +199,30 @@ def validate_model(payload: dict[str, Any], current: dict[str, Any]) -> dict[str
         elif not 0 <= value <= 600:
             errors["rate_limit_per_minute"] = "速率上限必须在 0~600 之间（0 表示不限制）"
 
+    for key, label, low, high in (
+        ("split_max_messages", "分段最大条数", 1, 5),
+        ("split_delay_ms", "分段间隔", 0, 5000),
+    ):
+        if key in payload:
+            value = _as_int(payload[key])
+            if value is None:
+                errors[key] = f"{label}不能为空" if _is_blank(payload[key]) else f"{label}必须是整数"
+            elif not low <= value <= high:
+                errors[key] = f"{label}必须在 {low}~{high} 之间"
+
+    for key, label in (("split_chance", "分段概率"), ("meme_chance", "表情概率")):
+        if key in payload:
+            value = _as_float(payload[key])
+            if value is None:
+                errors[key] = f"{label}不能为空" if _is_blank(payload[key]) else f"{label}必须是数字"
+            elif not 0.0 <= value <= 1.0:
+                errors[key] = f"{label}必须在 0~100% 之间"
+
+    if "meme_dir" in payload:
+        text = str(payload["meme_dir"] or "").strip()
+        if len(text) > 500:
+            errors["meme_dir"] = "表情目录路径过长"
+
     if "blocked_words" in payload and not isinstance(payload["blocked_words"], (list, tuple, str)):
         errors["blocked_words"] = "敏感词格式不对"
 
@@ -263,6 +306,14 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["notify_error_private"] = bool(payload["notify_error_private"])
     if "rate_limit_per_minute" in payload:
         updates["rate_limit_per_minute"] = _as_int(payload["rate_limit_per_minute"])
+    for key in ("split_max_messages", "split_delay_ms"):
+        if key in payload:
+            updates[key] = _as_int(payload[key])
+    for key in ("split_chance", "meme_chance"):
+        if key in payload:
+            updates[key] = _as_float(payload[key])
+    if "meme_dir" in payload:
+        updates["meme_dir"] = str(payload["meme_dir"] or "").strip()
     if "blocked_words" in payload:
         # 界面上是一行一个，也容忍逗号 / 顿号分隔
         updates["blocked_words"] = normalize_words(payload["blocked_words"])

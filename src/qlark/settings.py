@@ -58,6 +58,28 @@ DEFAULTS: dict[str, Any] = {
     "max_images_per_message": 3,
     #: 是否把图片交给视觉模型（关掉则一律降级成 [图片] 占位）
     "image_understanding": True,
+
+    # ---- 随机分段回复 / 表情包回复 ----
+    #
+    # 「会不会做」是人设级的（见 personas.split_enabled / meme_enabled），
+    # 「做得多频繁」是全局调参 —— 换个人设不该把频率也换掉。
+    #
+    # **概率必须由代码掷骰子**：只要把规则发给模型，它几乎每次都会用。
+    # 没掷中时那个规则块**根本不进提示词**，模型不知道有这个能力，自然不会用。
+    #: 分段概率（0~1）
+    "split_chance": 0.25,
+    #: 一次回复最多拆成几条
+    "split_max_messages": 2,
+    #: 多条之间的间隔（毫秒）。瞬间连发一眼就是机器人。
+    "split_delay_ms": 500,
+    #: 表情包概率（0~1），与分段**相互独立**
+    "meme_chance": 0.20,
+    #: 表情目录；留空 = <程序目录>/memes
+    "meme_dir": "",
+    #: 输出格式不对时重新生成几次（1 次 = 最多调用模型 2 次）
+    "reply_retry_max": 1,
+    #: 重试用尽后的兜底文案
+    "reply_fallback_text": "服务器宕机了喵",
     #: 首启向导是否已完成（M6）
     "first_run_done": False,
     #: 用户是否已确认"QQ 机器人存在风控/封号风险"（需求规格 §9.3）
@@ -302,8 +324,78 @@ class Settings:
     def notify_error_private(self, value: bool) -> None:
         self.set("notify_error_private", bool(value))
 
+    # ------------------------------------------------- 随机分段 / 表情包（调参）
+    def _clamped(self, key: str, default, *, low, high, cast):
+        try:
+            value = cast(self.get(key))
+        except (TypeError, ValueError):
+            return default
+        return max(low, min(high, value))
+
+    @property
+    def split_chance(self) -> float:
+        return self._clamped("split_chance", 0.25, low=0.0, high=1.0, cast=float)
+
+    @split_chance.setter
+    def split_chance(self, value) -> None:
+        self.set("split_chance", self._clamp_to(value, 0.0, 1.0, float, 0.25))
+
+    @property
+    def split_max_messages(self) -> int:
+        return self._clamped("split_max_messages", 2, low=1, high=5, cast=int)
+
+    @split_max_messages.setter
+    def split_max_messages(self, value) -> None:
+        self.set("split_max_messages", self._clamp_to(value, 1, 5, int, 2))
+
+    @property
+    def split_delay_ms(self) -> int:
+        return self._clamped("split_delay_ms", 500, low=0, high=5000, cast=int)
+
+    @split_delay_ms.setter
+    def split_delay_ms(self, value) -> None:
+        self.set("split_delay_ms", self._clamp_to(value, 0, 5000, int, 500))
+
+    @property
+    def meme_chance(self) -> float:
+        return self._clamped("meme_chance", 0.20, low=0.0, high=1.0, cast=float)
+
+    @meme_chance.setter
+    def meme_chance(self, value) -> None:
+        self.set("meme_chance", self._clamp_to(value, 0.0, 1.0, float, 0.20))
+
+    @property
+    def reply_retry_max(self) -> int:
+        return self._clamped("reply_retry_max", 1, low=0, high=3, cast=int)
+
+    @reply_retry_max.setter
+    def reply_retry_max(self, value) -> None:
+        self.set("reply_retry_max", self._clamp_to(value, 0, 3, int, 1))
+
+    @property
+    def meme_dir(self) -> str:
+        return str(self.get("meme_dir") or "").strip()
+
+    @meme_dir.setter
+    def meme_dir(self, value) -> None:
+        self.set("meme_dir", str(value or "").strip())
+
+    @property
+    def reply_fallback_text(self) -> str:
+        return str(self.get("reply_fallback_text") or "").strip() or "服务器宕机了喵"
+
+    @reply_fallback_text.setter
+    def reply_fallback_text(self, value) -> None:
+        self.set("reply_fallback_text", str(value or "").strip())
+
+    @staticmethod
+    def _clamp_to(value, low, high, cast, default):
+        try:
+            return max(low, min(high, cast(value)))
+        except (TypeError, ValueError):
+            return default
+
     def id_set(self, key: str) -> set[str]:
-        """把配置里的 QQ / 群号列表读成字符串集合（兼容数字与字符串两种写法）。"""
         raw = self.get(key)
         if not isinstance(raw, (list, tuple, set)):
             return set()

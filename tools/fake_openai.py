@@ -154,6 +154,9 @@ def count_prompt_tokens(messages: object) -> int:
 
 def build_reply(body: dict) -> str:
     """按固定规则生成回复文本（见模块 docstring）。"""
+    scripted = STATE.take_reply()
+    if scripted is not None:
+        return scripted
     if FIXED_REPLY is not None:
         return FIXED_REPLY
     messages = body.get("messages")
@@ -208,6 +211,25 @@ class _State:
         self.fail_status = 500
         self.fail_message = "boom"
         self.seq = 0  # 成功回复的序号，用于 chatcmpl-fake-<n>
+        #: 排队的固定回复。非空时按顺序取，用来测分段/表情/JSON 重试这些路径
+        self.replies: list[str] = []
+        #: 队列空了之后，最后一条是否反复使用（False = 退回默认的"收到：..."）
+        self.repeat_last = False
+
+    # -- 固定回复 --------------------------------------------------------- #
+    def take_reply(self) -> str | None:
+        """取一条排队的固定回复；没有就返回 ``None`` 走默认回显。"""
+        with self.lock:
+            if not self.replies:
+                return None
+            if len(self.replies) == 1 and self.repeat_last:
+                return self.replies[0]
+            return self.replies.pop(0)
+
+    def set_replies(self, replies: list[str] | None, repeat_last: bool) -> None:
+        with self.lock:
+            self.replies = [str(item) for item in (replies or [])]
+            self.repeat_last = bool(repeat_last)
 
     # -- 记录 ------------------------------------------------------------- #
     def record(self, body: dict, path: str, authorization: str | None,
@@ -334,6 +356,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True})
             elif method == "POST" and path == "/_qlark/fail":
                 self._handle_fail()
+            elif method == "POST" and path == "/_qlark/reply":
+                self._handle_reply()
             elif method == "POST" and path == "/_qlark/ok":
                 STATE.clear_failure()
                 self._send_json(200, {"ok": True})
@@ -465,6 +489,26 @@ class Handler(BaseHTTPRequestHandler):
 
         STATE.set_failure(times, status, message)
         self._send_json(200, {"ok": True})
+
+    def _handle_reply(self) -> None:
+        """排队若干条固定回复，用来测分段/表情/JSON 重试这些路径。
+
+        ``{"replies": ["...", "..."], "repeat_last": true}``
+        ``replies`` 为空（或省略）表示清空，退回默认的 ``收到：...`` 回显。
+        """
+        body = self._read_json(empty_ok=True)
+        raw = body.get("replies")
+        if raw is None:
+            raw = []
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            raise _BadRequest("replies 必须是字符串或字符串数组")
+        repeat_last = bool(body.get("repeat_last", False))
+        STATE.set_replies([str(item) for item in raw], repeat_last)
+        self._send_json(
+            200, {"ok": True, "queued": len(STATE.replies), "repeat_last": repeat_last}
+        )
 
     # -- 读写工具 --------------------------------------------------------- #
     def _read_json(self, *, empty_ok: bool) -> dict:

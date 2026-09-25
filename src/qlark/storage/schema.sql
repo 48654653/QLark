@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS personas (
   model_override       TEXT    DEFAULT NULL,
   temperature_override REAL    DEFAULT NULL,
   max_tokens_override  INTEGER DEFAULT NULL,
+  -- 随机分段回复 / 表情包回复：**人设级**开关。
+  -- 谁"会用"这两种表达方式属于角色性格；"用得多频繁"是全局调参（见 config）。
+  split_enabled        INTEGER DEFAULT 0,
+  meme_enabled         INTEGER DEFAULT 0,
   created_at           INTEGER NOT NULL
 );
 

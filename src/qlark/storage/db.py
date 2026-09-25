@@ -24,6 +24,17 @@ from ..core.models import Stats
 
 log = logging.getLogger(__name__)
 
+#: 建库之后要补齐的列（老库升级用）：表名 → [(列名, 列定义)]
+#:
+#: 只增不删、只补不改 —— 迁移一旦开始改类型或删列，就需要真正意义上的版本号了，
+#: 而现在这个规模还不值得。
+COLUMN_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
+    "personas": [
+        ("split_enabled", "INTEGER DEFAULT 0"),
+        ("meme_enabled", "INTEGER DEFAULT 0"),
+    ],
+}
+
 
 def local_midnight_ts(when: float | None = None) -> float:
     """本地时区当日 00:00 的 Unix 时间戳（统计跨天重置的依据）。"""
@@ -74,6 +85,31 @@ class Database:
     def init_schema(self) -> None:
         with self._lock:
             self._conn.executescript(_load_schema_sql())
+        self._migrate_columns()
+
+    def _migrate_columns(self) -> None:
+        """给老库补上后加的列。
+
+        ``schema.sql`` 全是 ``CREATE TABLE IF NOT EXISTS`` —— 表已经存在时它
+        **什么都不会做**，新加的列也就永远不会出现。所以每次启动都对着
+        ``PRAGMA table_info`` 检查一遍，缺哪个补哪个。``ALTER TABLE ADD COLUMN``
+        是幂等安全的（缺了才加），已有数据也不会动。
+        """
+        for table, columns in COLUMN_MIGRATIONS.items():
+            try:
+                existing = {row["name"] for row in self.query(f"PRAGMA table_info({table})")}
+            except sqlite3.Error:  # pragma: no cover - 表都读不到就没什么能做的
+                continue
+            if not existing:
+                continue
+            for name, ddl in columns:
+                if name in existing:
+                    continue
+                try:
+                    self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    log.info("已为老库补列：%s.%s", table, name)
+                except sqlite3.Error:
+                    log.exception("补列失败：%s.%s", table, name)
 
     def close(self) -> None:
         with self._lock:

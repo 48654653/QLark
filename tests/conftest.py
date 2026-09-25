@@ -163,6 +163,16 @@ class FakeOpenAI:
     def ok(self) -> None:
         _post(f"{self.base_url}/_qlark/ok")
 
+    def replies(self, *texts: str, repeat_last: bool = False) -> None:
+        """排队固定回复，用来测分段 / 表情 / JSON 重试这些路径。
+
+        不调用它就还是默认的 ``收到：<内容>`` 回显。
+        """
+        _post(
+            f"{self.base_url}/_qlark/reply",
+            {"replies": list(texts), "repeat_last": repeat_last},
+        )
+
     def health(self) -> dict:
         return _get(f"{self.base_url}/_qlark/health")
 

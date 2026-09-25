@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Iterable
 
 #: 图片类段（M5 会把这些真正发给视觉模型）
@@ -230,6 +231,24 @@ def build_reply_segment(message_id: str | int) -> dict[str, Any]:
     return {"type": "reply", "data": {"id": str(message_id)}}
 
 
+def build_image_segment(source: str | Path) -> dict[str, Any]:
+    """构造图片段。
+
+    本地文件必须写成 URI 形式（``file:///E:/...``）—— OneBot 的 ``file`` 字段
+    在给本地路径时就是这个约定。已经是 URI / data URL 的原样透传。
+
+    .. note::
+       **本地路径能不能真的发出去，必须在真机上验证**（NapCat 4.18.28）。
+       如果不行，退路是改用 base64 的 data URL，或先走 NapCat 的上传接口拿标识。
+    """
+    text = str(source or "").strip()
+    if not text:
+        raise ValueError("图片地址为空")
+    if not text.startswith(("file://", "http://", "https://", "base64://", "data:")):
+        text = Path(text).expanduser().resolve().as_uri()
+    return {"type": "image", "data": {"file": text}}
+
+
 __all__ = [
     "FACE_TYPES",
     "FORWARD_TYPES",
@@ -238,6 +257,7 @@ __all__ = [
     "PLACEHOLDER_TEXT",
     "ParsedMessage",
     "UNKNOWN_PLACEHOLDER",
+    "build_image_segment",
     "build_reply_segment",
     "build_text_segments",
     "parse_segments",

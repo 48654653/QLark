@@ -29,6 +29,9 @@ DIST = ROOT / "dist" / "QLark"
 SPEC = ROOT / "QLark.spec"
 RUNTIME = ROOT / "runtime" / "napcat"
 
+#: 表情包素材支持的图片格式（与 qlark.chat.memes.SUPPORTED_SUFFIXES 保持一致）
+MEME_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
+
 #: 打包产物里必须存在的文件（少一个都说明打包漏了东西）
 REQUIRED = [
     "QLark.exe",
@@ -89,6 +92,35 @@ def check() -> int:
     return 0
 
 
+def copy_memes(dest: Path) -> None:
+    """把源码目录的 ``memes/`` 拷进产物（用户放的表情包素材）。
+
+    为什么用"拷贝"而不是让用户在 ``dist`` 里放图：``dist`` 每次打包都会被整个
+    删掉重建，放进去的东西下一次就没了。源码目录才是母本。
+
+    目录不存在或没有图片时**跳过**，不算失败 —— 空的表情库只是不能发表情，
+    不影响程序启动（设置项里也可以随时指到别的目录）。
+    """
+    source = ROOT / "memes"
+    if not source.is_dir():
+        print("未找到 memes 目录，跳过表情包素材")
+        return
+
+    images = [
+        path
+        for path in source.rglob("*")
+        if path.is_file() and path.suffix.lower() in MEME_SUFFIXES
+    ]
+    if not images:
+        print("memes 目录里没有图片，跳过")
+        return
+
+    target = dest / "memes"
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    total = sum(path.stat().st_size for path in images)
+    print(f"已复制表情包素材：{len(images)} 张，{total / 1024 / 1024:.1f} MB → {target}")
+
+
 def build(*, with_runtime: bool, clean: bool) -> int:
     if clean:
         for path in (ROOT / "build", ROOT / "dist"):
@@ -119,6 +151,9 @@ def build(*, with_runtime: bool, clean: bool) -> int:
             print(f"  - {name}")
         return 1
     print("产物完整性检查通过。")
+
+    # 表情包素材跟着包走：源码目录是母本，dist 每次都会被清掉
+    copy_memes(DIST)
 
     if with_runtime:
         if not RUNTIME.is_dir():

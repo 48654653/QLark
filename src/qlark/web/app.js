@@ -115,6 +115,12 @@
     bMemoryRounds: $('bMemoryRounds'), eMemoryRounds: $('eMemoryRounds'),
     bMaxReplyChars: $('bMaxReplyChars'), eMaxReplyChars: $('eMaxReplyChars'),
     bQuoteGroup: $('bQuoteGroup'), bMessageLabel: $('bMessageLabel'),
+    bMemeDir: $('bMemeDir'), btnMemeDirBrowse: $('btnMemeDirBrowse'), memeDirHint: $('memeDirHint'),
+    eMemeDir: $('eMemeDir'),
+    bSplitChance: $('bSplitChance'), eSplitChance: $('eSplitChance'),
+    bMemeChance: $('bMemeChance'), eMemeChance: $('eMemeChance'),
+    bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
+    bSplitDelay: $('bSplitDelay'), eSplitDelay: $('eSplitDelay'),
     bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
 
     /* ----- M6：风控设置（对话行为） ----- */
@@ -133,6 +139,7 @@
     pModelOverride: $('pModelOverride'), ePModelOverride: $('ePModelOverride'),
     pTempOverride: $('pTempOverride'), ePTempOverride: $('ePTempOverride'),
     pTokensOverride: $('pTokensOverride'), ePTokensOverride: $('ePTokensOverride'),
+    pSplitEnabled: $('pSplitEnabled'), pMemeEnabled: $('pMemeEnabled'),
     btnPersonaSave: $('btnPersonaSave'), btnPersonaResetMemory: $('btnPersonaResetMemory'),
     personaEditHint: $('personaEditHint'),
     permStateTag: $('permStateTag'), permWhitelistOnly: $('permWhitelistOnly'),
@@ -977,6 +984,11 @@
     max_reply_chars: ['bMaxReplyChars', 'eMaxReplyChars'],
     reply_quote_group: ['bQuoteGroup', null],
     message_label: ['bMessageLabel', null],
+    split_chance: ['bSplitChance', 'eSplitChance'],
+    split_max_messages: ['bSplitMax', 'eSplitMax'],
+    split_delay_ms: ['bSplitDelay', 'eSplitDelay'],
+    meme_chance: ['bMemeChance', 'eMemeChance'],
+    meme_dir: ['bMemeDir', 'eMemeDir'],
     error_notice_private: ['bErrorNotice', null],
     // M6：风控
     rate_limit_per_minute: ['bRateLimit', 'eRateLimit'],
@@ -1092,6 +1104,14 @@
       auto_summary: (s.auto_summary === undefined || s.auto_summary === null) ? null : !!s.auto_summary,
       reply_quote_group: asBool(s.reply_quote_group, false),
       message_label: asBool(s.message_label, true),
+      split_chance: numOr(s.split_chance, 0.25),
+      split_max_messages: numOr(s.split_max_messages, 2),
+      split_delay_ms: numOr(s.split_delay_ms, 500),
+      meme_chance: numOr(s.meme_chance, 0.2),
+      meme_dir: String(s.meme_dir || ''),
+      meme_dir_effective: String(s.meme_dir_effective || ''),
+      meme_dir_available: !!s.meme_dir_available,
+      meme_catalog: (s.meme_catalog && typeof s.meme_catalog === 'object') ? s.meme_catalog : {},
       max_reply_chars: numOr(s.max_reply_chars, 500),
       error_notice_private: asBool(noticeRaw, true),
       rate_limit_per_minute: numOr(s.rate_limit_per_minute, 0),
@@ -1164,6 +1184,12 @@
     dom.bMaxReplyChars.value = String(cfg.max_reply_chars);
     dom.bQuoteGroup.checked = !!cfg.reply_quote_group;
     dom.bMessageLabel.checked = !!cfg.message_label;
+    dom.bMemeDir.value = cfg.meme_dir || '';
+    dom.bSplitChance.value = String(Math.round(cfg.split_chance * 100));
+    dom.bMemeChance.value = String(Math.round(cfg.meme_chance * 100));
+    dom.bSplitMax.value = String(cfg.split_max_messages);
+    dom.bSplitDelay.value = String(cfg.split_delay_ms);
+    paintMemeDirHint(cfg);
     dom.bErrorNotice.checked = !!cfg.error_notice_private;
     dom.bRateLimit.value = String(cfg.rate_limit_per_minute);
     dom.bBlockedWords.value = cfg.blocked_words.join('\n');
@@ -1205,6 +1231,12 @@
     payload.memory_rounds = inputNum(dom.bMemoryRounds);
     payload.reply_quote_group = !!dom.bQuoteGroup.checked;
     payload.message_label = !!dom.bMessageLabel.checked;
+    // 界面用百分比，后端存 0~1
+    payload.split_chance = ratioFromPercent(dom.bSplitChance, 0.25);
+    payload.meme_chance = ratioFromPercent(dom.bMemeChance, 0.2);
+    payload.split_max_messages = inputNum(dom.bSplitMax);
+    payload.split_delay_ms = inputNum(dom.bSplitDelay);
+    payload.meme_dir = dom.bMemeDir.value.trim();
     payload.max_reply_chars = inputNum(dom.bMaxReplyChars);
     payload.error_notice_private = !!dom.bErrorNotice.checked;
     // M6：风控（textarea 每行一个词 → 数组）
@@ -1578,6 +1610,8 @@
     dom.pModelOverride.value = p.model_override || '';
     dom.pTempOverride.value = (p.temperature_override === null) ? '' : String(p.temperature_override);
     dom.pTokensOverride.value = (p.max_tokens_override === null) ? '' : String(p.max_tokens_override);
+    dom.pSplitEnabled.checked = !!p.split_enabled;
+    dom.pMemeEnabled.checked = !!p.meme_enabled;
 
     dom.btnPersonaSave.disabled = false;
     dom.btnPersonaResetMemory.disabled = false;
@@ -1615,6 +1649,62 @@
     });
   }
 
+  /* ----- 表情目录 ----- */
+
+  /** 百分比输入框 → 0~1 的比例。空/非法时回落到默认值。 */
+  function ratioFromPercent(el, fallback) {
+    var raw = el ? String(el.value || '').trim() : '';
+    if (!raw) return fallback;
+    var n = Number(raw);
+    if (!isFinite(n)) return fallback;
+    return Math.max(0, Math.min(100, n)) / 100;
+  }
+
+  /** 把后端扫描到的情绪清单画成一句人话，让人立刻看出目录配没配对。 */
+  function paintMemeDirHint(cfg) {
+    if (!dom.memeDirHint) return;
+    var names = Object.keys(cfg.meme_catalog || {});
+    var where = cfg.meme_dir_effective || '';
+    if (!where) {
+      setText(dom.memeDirHint, '散放「生气.png」这种文件即可，文件名就是情绪；也可以建子文件夹，一个情绪放多张时会随机挑一张');
+      return;
+    }
+    if (!cfg.meme_dir_available || !names.length) {
+      setText(dom.memeDirHint, '⚠ 这个目录里没找到可用图片：' + where + '（支持 png / jpg / gif / webp / bmp）');
+      return;
+    }
+    var total = 0;
+    names.forEach(function (k) { total += Number(cfg.meme_catalog[k]) || 0; });
+    setText(dom.memeDirHint,
+      '✓ ' + where + ' —— 识别到 ' + names.length + ' 个情绪、共 ' + total + ' 张：' + names.join('、'));
+  }
+
+  function browseMemeDir() {
+    var btn = dom.btnMemeDirBrowse;
+    if (!btn) return;
+    setBusy(btn, true, '选择中…');
+    apiCall('choose_meme_dir').then(function (res) {
+      setBusy(btn, false);
+      if (!res || res.ok === false) {
+        toast((res && res.error) || '打开文件夹选择框失败', 'error');
+        return;
+      }
+      if (res.cancelled || !res.path) return;
+      dom.bMemeDir.value = res.path;
+      // 选完立刻扫一遍：路径填错、目录是空的，当场就能看见，而不是等发表情时才发现
+      return apiCall('scan_meme_dir', res.path).then(function (scan) {
+        if (!scan) return;
+        paintMemeDirHint({
+          meme_catalog: scan.emotions || {},
+          meme_dir_effective: scan.path || res.path,
+          meme_dir_available: !!scan.exists
+        });
+      });
+    }).catch(function () {
+      setBusy(btn, false);
+    });
+  }
+
   function savePersona() {
     var p = currentPersona();
     if (!p) return;
@@ -1624,7 +1714,9 @@
       enabled: !!dom.pEnabled.checked,
       model_override: dom.pModelOverride.value.trim(),
       temperature_override: inputNum(dom.pTempOverride),
-      max_tokens_override: inputNum(dom.pTokensOverride)
+      max_tokens_override: inputNum(dom.pTokensOverride),
+      split_enabled: !!dom.pSplitEnabled.checked,
+      meme_enabled: !!dom.pMemeEnabled.checked
     };
     var btn = dom.btnPersonaSave;
     setBusy(btn, true, '保存中…');
@@ -4521,6 +4613,7 @@
     /* ----- M3：人设配置页 ----- */
     dom.btnPersonaNew.addEventListener('click', createPersona);
     dom.btnPersonaSave.addEventListener('click', savePersona);
+    if (dom.btnMemeDirBrowse) dom.btnMemeDirBrowse.addEventListener('click', browseMemeDir);
     dom.btnPersonaDelete.addEventListener('click', deletePersona);
     dom.btnPersonaResetMemory.addEventListener('click', resetPersonaMemory);
     dom.pPrompt.addEventListener('input', updatePromptCount);

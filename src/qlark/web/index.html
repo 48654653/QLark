@@ -455,6 +455,44 @@
             </div>
 
             <div class="field">
+              <span class="field-label">表情包目录</span>
+              <div class="row-inline">
+                <input class="input" id="bMemeDir" type="text" spellcheck="false" autocomplete="off" placeholder="留空 = 程序目录下的 memes 文件夹">
+                <button class="btn" id="btnMemeDirBrowse" type="button">浏览…</button>
+              </div>
+              <span class="field-hint" id="memeDirHint">散放「生气.png」这种文件即可，文件名就是情绪；也可以建子文件夹，一个情绪放多张时会随机挑一张</span>
+              <span class="field-err" id="eMemeDir" hidden></span>
+            </div>
+
+            <label class="field">
+              <span class="field-label">分段概率（%）</span>
+              <input class="input" id="bSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
+              <span class="field-hint">**只有人设勾选了「随机分段回复」的会话才受影响。**掷骰子由程序来做，没掷中时那条规则根本不会发给模型</span>
+              <span class="field-err" id="eSplitChance" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">表情概率（%）</span>
+              <input class="input" id="bMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
+              <span class="field-hint">与分段**相互独立**，所以「只发一条但配个表情」也会出现</span>
+              <span class="field-err" id="eMemeChance" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">一次最多几条</span>
+              <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="2">
+              <span class="field-hint">建议 2 条。再多容易显得在刷屏</span>
+              <span class="field-err" id="eSplitMax" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">多条之间的间隔（毫秒）</span>
+              <input class="input" id="bSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
+              <span class="field-hint">瞬间连发一眼就是机器人；500 毫秒左右最像人在打字</span>
+              <span class="field-err" id="eSplitDelay" hidden></span>
+            </label>
+
+            <div class="field">
               <span class="field-label">私聊出错时告知原因</span>
               <label class="switch">
                 <input type="checkbox" id="bErrorNotice">
@@ -561,6 +599,26 @@
                   <input class="input" id="pTokensOverride" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="留空 = 用全局上限">
                   <span class="field-err" id="ePTokensOverride" hidden></span>
                 </label>
+
+                <div class="field">
+                  <span class="field-label">随机分段回复</span>
+                  <label class="switch">
+                    <input type="checkbox" id="pSplitEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">允许偶尔连发两条</span>
+                  </label>
+                  <span class="field-hint">勾选后**才有机会**连发；实际频率由「模型配置 → 对话行为」里的分段概率决定。没掷中的轮次，这条规则根本不会发给模型</span>
+                </div>
+
+                <div class="field">
+                  <span class="field-label">表情包回复</span>
+                  <label class="switch">
+                    <input type="checkbox" id="pMemeEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">允许偶尔配一张表情</span>
+                  </label>
+                  <span class="field-hint">和分段是**各自独立**的开关与概率，可以只配表情不连发。表情图取自「对话行为」里配置的目录</span>
+                </div>
               </div>
 
               <div class="panel-foot">
