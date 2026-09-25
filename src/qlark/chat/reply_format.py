@@ -38,12 +38,13 @@ SUGGESTED_MESSAGE_CHARS = 40
 #: 内置的「多段对话」规则。人设里填了自定义提示词就整段替换掉它。
 #:
 #: 可用占位符：``{max_messages}``（条数上限）、``{chars}``（单条字数建议）
-SPLIT_RULE_DEFAULT = """**本轮请写成 2 条**（最多 {max_messages} 条）：一句话拆成两条来发，像真人打字时想到什么又补一句那样。
+SPLIT_RULE_DEFAULT = """**本轮请写成 2 条**（最多 {max_messages} 条）：像真人打字时想到什么又补一句那样，
+第一条说完，第二条接着说，**两条合起来才是一个完整的意思**。
 只有在这句话短到根本没法拆（比如「嗯」「好的」「在的」）时，才写成 1 条。
-每条不超过 {chars} 字，不要包含换行，不要把一句话硬拆成两半。"""
+每条不超过 {chars} 字，不要包含换行，也不要把一句话从中间硬切成两半。"""
 
 #: 内置的「发送表情」规则。占位符：``{emotions}``（可用情绪，顿号分隔）
-MEME_RULE_DEFAULT = """**本轮请配一个表情**，从这些里选一个：{emotions}
+MEME_RULE_DEFAULT = """**本轮请配一个表情**，从这些里选一个（只挑一个，不要写成数组）：{emotions}
 要挑和你这句话情绪最贴合的那个。只有当这句话完全不适合配任何表情时，才省略这个键。"""
 
 #: 两个功能都关时，messages 只能有一条
@@ -51,6 +52,104 @@ SINGLE_MESSAGE_RULE = "messages：必填，**只能写 1 条**，就是你要说
 
 #: 没开表情时必须明确禁止，否则模型可能自己加一个
 NO_MEME_RULE = "不要输出 meme 键。"
+
+
+# --------------------------------------------------------------------------- #
+# 内置提示词模板
+# --------------------------------------------------------------------------- #
+#: 「多段对话」的内置模板。界面上给用户挑，挑完仍可继续改。
+#: 占位符：``{max_messages}``、``{chars}``
+SPLIT_PRESETS: tuple[dict[str, str], ...] = (
+    {
+        "id": "default",
+        "name": "默认 · 想到什么补一句",
+        "text": SPLIT_RULE_DEFAULT,
+    },
+    {
+        "id": "escalate",
+        "name": "情绪递进 · 先反应再补真心话",
+        "text": (
+            "**本轮请写成 2 条**（最多 {max_messages} 条）。\n"
+            "第一条先给出当下的直接反应（惊讶、吐槽、反问），要短、要冲；\n"
+            "第二条再补上真实的态度或心情，可以犹豫、可以嘴硬。\n"
+            "两条合起来才是一个完整的意思。每条不超过 {chars} 字，不要包含换行。"
+        ),
+    },
+    {
+        "id": "half",
+        "name": "欲言又止 · 说一半停住",
+        "text": (
+            "**本轮请写成 2 条**（最多 {max_messages} 条）。\n"
+            "第一条把话说一半就停住（说完就后悔，或者故意吊人胃口），用省略号或破折号收尾；\n"
+            "第二条才补上后半句，或者干脆反悔改口。\n"
+            "每条不超过 {chars} 字，不要包含换行。"
+        ),
+    },
+    {
+        "id": "punch",
+        "name": "反问 + 补刀",
+        "text": (
+            "**本轮请写成 2 条**（最多 {max_messages} 条）。\n"
+            "第一条用一个反问把话头递回去；\n"
+            "第二条紧跟一句吐槽或补刀，把真正的意思说出来。\n"
+            "每条不超过 {chars} 字，不要包含换行。"
+        ),
+    },
+    {
+        "id": "snap",
+        "name": "先甩结论 · 再慢慢解释",
+        "text": (
+            "**本轮请写成 2 条**（最多 {max_messages} 条）。\n"
+            "第一条极短（2~6 个字），像脱口而出的结论、拒绝或感叹；\n"
+            "第二条再解释为什么。\n"
+            "每条不超过 {chars} 字，不要包含换行。"
+        ),
+    },
+)
+
+#: 「发送表情」的内置模板。占位符：``{emotions}``
+MEME_PRESETS: tuple[dict[str, str], ...] = (
+    {
+        "id": "default",
+        "name": "默认 · 挑最贴合的",
+        "text": MEME_RULE_DEFAULT,
+    },
+    {
+        "id": "strong",
+        "name": "只在情绪明显时配",
+        "text": (
+            "**本轮请配一个表情**，从这些里选一个：{emotions}\n"
+            "先掂量这句话的情绪强度：只有明显高兴、生气、委屈、害羞、无语的时候才配；\n"
+            "平淡的陈述（回答事实、说明情况）就省略这个键。"
+        ),
+    },
+    {
+        "id": "vivid",
+        "name": "优先夸张的",
+        "text": (
+            "**本轮请配一个表情**，从这些里选一个：{emotions}\n"
+            "优先挑情绪最外放、最夸张的那一个，别挑温和的；实在没有贴切的就省略这个键。"
+        ),
+    },
+    {
+        "id": "rare",
+        "name": "极少配（会让实际频率更低）",
+        "text": (
+            "从这些里选一个：{emotions}\n"
+            "**大多数时候不要配这个键。**只有在这句话非常好笑、或者你真的生气了的时候才加上。\n"
+            "（注意：这会让实际配图频率明显低于设置里的概率。）"
+        ),
+    },
+)
+
+
+def preset_text(presets: Sequence[dict[str, str]], preset_id: str) -> str:
+    """按 id 取模板文本；找不到返回空串（= 用第一个内置的）。"""
+    wanted = str(preset_id or "").strip()
+    for item in presets:
+        if item.get("id") == wanted:
+            return item.get("text", "")
+    return ""
 
 #: ``` 或 ```json 围栏
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$")
@@ -354,17 +453,35 @@ def salvage(text: str, *, max_messages: int = 2) -> list[str]:
     return [plain] if len(plain) >= 2 else []
 
 
-def compose_memory_text(messages: Sequence[str], meme: str | None) -> str:
-    """机器人说过的话怎么存进记忆。
+#: 句末标点。拼接两条消息时用它判断该不该补逗号
+_TAIL_PUNCT = ("。", "！", "？", "…", "~", "～", "!", "?", "，", ",", "；", ";", "：", ":")
 
-    **存自然文本 + 一个方括号标注，不存 JSON、也不存键值对。**
-    原因：键值对本身也是一种格式，模型在历史里看多了照样会模仿 ——
-    那只是把 JSON 污染换了个样子。``[表情：发怒]`` 读起来就是聊天记录的一部分。
+
+def compose_memory_text(messages: Sequence[str]) -> str:
+    """机器人说过的话怎么存进记忆：**拼成一行普通文本，不记表情**。
+
+    .. code-block:: text
+
+        快到中午了，你不会刚睡醒吧？
+
+    两条规矩，都是被同一个 bug 逼出来的：
+
+    1. **不记表情**。以前存成 ``…\\n[表情：嫌弃]``，结果没掷中表情的那些轮次里，
+       模型看着历史就照着模仿，把 ``[表情：xxx]`` 当正文吐出来发给用户。
+       历史里只要出现过一次某种格式，模型就会学 —— 这跟 JSON 泄漏是同一回事。
+    2. **拼成一行**。多行文本同样会被模仿，而且把两条并成一句更接近"真人一口气说完"。
+
+    代价是模型不知道自己上次配了什么表情，理论上可能连着配同一个。相比"把标注
+    当正文发出去"，这个代价可以接受。
     """
-    body = "\n".join(str(item).strip() for item in messages if str(item).strip())
-    if meme:
-        return f"{body}\n[表情：{meme}]" if body else f"[表情：{meme}]"
-    return body
+    parts = [str(item).strip() for item in messages if str(item).strip()]
+    if not parts:
+        return ""
+    out = parts[0]
+    for part in parts[1:]:
+        # 上一句已经有句末标点就直接接，否则补个逗号 —— 免得拼出 "。，"
+        out += part if out.endswith(_TAIL_PUNCT) else "，" + part
+    return out
 
 
 def build_preview(
@@ -419,8 +536,10 @@ def build_preview(
 
 
 __all__ = [
+    "MEME_PRESETS",
     "MEME_RULE_DEFAULT",
     "OUTPUT_RULES_TITLE",
+    "SPLIT_PRESETS",
     "SPLIT_RULE_DEFAULT",
     "SUGGESTED_MESSAGE_CHARS",
     "ParsedReply",
@@ -428,5 +547,6 @@ __all__ = [
     "build_preview",
     "compose_memory_text",
     "parse_reply",
+    "preset_text",
     "salvage",
 ]

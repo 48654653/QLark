@@ -16,10 +16,15 @@ import pytest
 from conftest import FakeOpenAI, _get, wait_for
 from qlark.chat.memes import MemeLibrary
 from qlark.chat.reply_format import (
+    MEME_PRESETS,
+    MEME_RULE_DEFAULT,
+    SPLIT_PRESETS,
+    SPLIT_RULE_DEFAULT,
     build_output_rules,
     build_preview,
     compose_memory_text,
     parse_reply,
+    preset_text,
     salvage,
 )
 from qlark.chat.store import memory_key
@@ -333,10 +338,29 @@ def test_salvage_returns_empty_for_garbage() -> None:
 
 
 def test_compose_memory_text() -> None:
-    assert compose_memory_text(["在的"], None) == "在的"
-    assert compose_memory_text(["在的", "怎么啦"], None) == "在的\n怎么啦"
-    assert compose_memory_text(["哼"], "生气") == "哼\n[表情：生气]"
-    assert compose_memory_text([], "生气") == "[表情：生气]"
+    """记忆里存**一行**普通文本，且**不记表情**。"""
+    assert compose_memory_text(["嗯"]) == "嗯"
+    assert compose_memory_text(["快到中午了", "你不会刚睡醒吧？"]) == "快到中午了，你不会刚睡醒吧？"
+    assert compose_memory_text([]) == ""
+    assert compose_memory_text(["  ", ""]) == ""
+
+
+def test_compose_memory_text_avoids_double_punctuation() -> None:
+    """上一句已经有句末标点就直接接，别拼出「。，」这种。"""
+    assert compose_memory_text(["好的。", "我这就去。"]) == "好的。我这就去。"
+    assert compose_memory_text(["真的吗！", "太好了"]) == "真的吗！太好了"
+    assert compose_memory_text(["诶…", "算了"]) == "诶…算了"
+
+
+def test_memory_never_records_the_meme_marker() -> None:
+    """**这条是防回归的关键。**
+
+    以前存成 ``…\\n[表情：嫌弃]``，结果没掷中表情的轮次里，模型看着历史照着模仿，
+    把 ``[表情：xxx]`` 当正文吐出来发给用户。历史里出现过什么格式，模型就会学。
+    """
+    text = compose_memory_text(["哼", "才不是呢"])
+    assert "[表情" not in text
+    assert "\n" not in text, "多行内容同样会被模仿，必须拼成一行"
 
 
 # --------------------------------------------------------------------------- #
@@ -475,6 +499,11 @@ def test_gates_are_independent(ready, fake_openai: FakeOpenAI, memes) -> None:
 # 端到端：记忆里存什么
 # --------------------------------------------------------------------------- #
 def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, memes) -> None:
+    """记忆里存的必须是一行普通文本：没有 JSON、没有多行、没有表情标注。
+
+    这三样任何一样留在历史里，模型都会照着模仿 —— 尤其是没掷中的轮次，
+    它会把 ``[表情：开心]`` 当正文吐出来发给用户。
+    """
     ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
     _enable(ready, split_enabled=True, meme_enabled=True)
     fake_openai.replies('{"messages": ["快到中午了", "你不会刚睡醒吧？"], "meme": "开心"}', repeat_last=True)
@@ -483,10 +512,28 @@ def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, me
 
     rows = ready.bot.pipeline.store.memory_messages(memory_key(f"group:{GROUP}", 1))
     assistant = next(r for r in rows if r["role"] == "assistant")
-    assert "{" not in assistant["content"] and '"messages"' not in assistant["content"], (
-        f"JSON 进记忆了：{assistant['content']!r}"
-    )
-    assert assistant["content"] == "快到中午了\n你不会刚睡醒吧？\n[表情：开心]"
+    assert assistant["content"] == "快到中午了，你不会刚睡醒吧？", assistant["content"]
+    assert '"messages"' not in assistant["content"], "JSON 进记忆了"
+    assert "[表情" not in assistant["content"], "表情标注进记忆了"
+    assert "\n" not in assistant["content"], "多行内容进记忆了"
+
+
+def test_history_has_no_format_for_the_model_to_imitate(ready, fake_openai: FakeOpenAI, memes) -> None:
+    """掷中之后紧接着一轮**没掷中**：这一轮的请求里不能出现任何可模仿的格式标记。"""
+    ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
+    _enable(ready, split_enabled=True, meme_enabled=True)
+    fake_openai.replies('{"messages": ["一", "二"], "meme": "开心"}', repeat_last=True)
+    _say(ready, expect=2)
+
+    # 这一轮把概率归零 = 不掷中，规则不会注入
+    ready.settings.update(split_chance=0.0, meme_chance=0.0)
+    fake_openai.reset()
+    _say(ready, message_id=99, expect=1)
+
+    payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
+    assert "【输出规则】" not in payload, "没掷中却注入了规则"
+    assert "[表情" not in payload, "历史里留着表情标注，模型会照着学"
+    assert '\\n[表情' not in payload
 
 
 # --------------------------------------------------------------------------- #
@@ -701,3 +748,51 @@ def test_preview_prompt_handles_missing_system_prompt() -> None:
     assert "还没写提示词" in res["text"]
     # 规则为空时那一块不该出现（两个功能都关的情况）
     assert not any("输出规则" in b["title"] for b in res["blocks"])
+
+
+# --------------------------------------------------------------------------- #
+# 内置提示词模板
+# --------------------------------------------------------------------------- #
+def test_presets_are_available_and_well_formed() -> None:
+    assert len(SPLIT_PRESETS) >= 3, "多段对话至少要给几套挑"
+    assert len(MEME_PRESETS) >= 3
+    for group in (SPLIT_PRESETS, MEME_PRESETS):
+        ids = [item["id"] for item in group]
+        assert len(ids) == len(set(ids)), f"模板 id 重复：{ids}"
+        for item in group:
+            assert item["name"] and item["text"], item
+
+
+def test_first_preset_is_the_builtin_default() -> None:
+    """第一套就是留空时用的那套 —— 否则"默认"和"模板列表"对不上。"""
+    assert SPLIT_PRESETS[0]["text"] == SPLIT_RULE_DEFAULT
+    assert MEME_PRESETS[0]["text"] == MEME_RULE_DEFAULT
+
+
+def test_every_split_preset_can_be_rendered() -> None:
+    """每套模板都要能填进占位符并产出可用的规则，不能有哪套是坏的。"""
+    for item in SPLIT_PRESETS:
+        rules = build_output_rules(
+            split=True, max_messages=2, meme=False, emotions=[],
+            split_prompt=item["text"],
+        )
+        assert "{max_messages}" not in rules, f"{item['id']} 的占位符没填上"
+        assert "{chars}" not in rules, f"{item['id']} 的占位符没填上"
+        assert "2 条" in rules, f"{item['id']} 没体现条数上限"
+
+
+def test_every_meme_preset_can_be_rendered() -> None:
+    for item in MEME_PRESETS:
+        rules = build_output_rules(
+            split=False, max_messages=2, meme=True, emotions=["嫌弃", "害羞"],
+            meme_prompt=item["text"],
+        )
+        assert "{emotions}" not in rules, f"{item['id']} 的占位符没填上"
+        assert "嫌弃、害羞" in rules, f"{item['id']} 没带上表情清单"
+
+
+def test_preset_text_lookup() -> None:
+    assert preset_text(SPLIT_PRESETS, "default") == SPLIT_RULE_DEFAULT
+    assert preset_text(SPLIT_PRESETS, "escalate") == SPLIT_PRESETS[1]["text"]
+    assert preset_text(SPLIT_PRESETS, "") == ""
+    assert preset_text(SPLIT_PRESETS, "并不存在") == ""

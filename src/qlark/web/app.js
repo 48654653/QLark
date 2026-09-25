@@ -150,6 +150,8 @@
     promptModalWho: $('promptModalWho'), promptTabs: $('promptTabs'),
     promptSplitText: $('promptSplitText'), ePromptSplit: $('ePromptSplit'),
     promptMemeText: $('promptMemeText'), ePromptMeme: $('ePromptMeme'),
+    promptSplitPreset: $('promptSplitPreset'), btnPromptSplitPreset: $('btnPromptSplitPreset'),
+    promptMemePreset: $('promptMemePreset'), btnPromptMemePreset: $('btnPromptMemePreset'),
     promptPreview: $('promptPreview'), promptPreviewNote: $('promptPreviewNote'),
     btnPromptSave: $('btnPromptSave'), btnPromptReset: $('btnPromptReset'),
     promptModalHint: $('promptModalHint'),
@@ -232,8 +234,11 @@
     personaUid: null,
     /** 提示词编辑弹窗正在编辑哪个人设 */
     promptUid: null,
-    /** 弹窗当前标签页：split | meme | preview */
-    promptTab: 'split',      // 当前选中的人设 uid
+    /** 提示词编辑弹窗当前标签页：split | meme | preview */
+    promptTab: 'split',
+    /** 内置提示词模板（首次打开弹窗时拉取） */
+    promptPresets: null,
+    promptPresetsLoaded: false,      // 当前选中的人设 uid
     perm: null,            // {whitelist_only, whitelist}
 
     /* ----- M4 ----- */
@@ -1759,6 +1764,47 @@
 
   /* ----- 提示词编辑弹窗 ----- */
 
+  /* ----- 内置提示词模板 ----- */
+
+  function fillPresetSelect(select, presets) {
+    if (!select) return;
+    select.textContent = '';
+    select.appendChild(mk('option', null, '（自定义 / 未选择模板）'));
+    (presets || []).forEach(function (item) {
+      var option = mk('option', null, item.name || item.id);
+      option.value = item.id;
+      select.appendChild(option);
+    });
+    select.value = '';
+  }
+
+  function loadPromptPresets() {
+    if (S.promptPresetsLoaded) return;
+    apiCall('get_prompt_presets').then(function (res) {
+      if (!res || res.ok === false) return;
+      S.promptPresets = { split: res.split || [], meme: res.meme || [] };
+      S.promptPresetsLoaded = true;
+      fillPresetSelect(dom.promptSplitPreset, S.promptPresets.split);
+      fillPresetSelect(dom.promptMemePreset, S.promptPresets.meme);
+    }, function () { /* 拉不到模板不影响手写，静默忽略 */ });
+  }
+
+  /** 套用模板：把模板文本填进编辑框，之后仍可继续改。 */
+  function applyPreset(kind) {
+    var isSplit = kind === 'split';
+    var select = isSplit ? dom.promptSplitPreset : dom.promptMemePreset;
+    var box = isSplit ? dom.promptSplitText : dom.promptMemeText;
+    if (!select || !box) return;
+    var wanted = select.value;
+    if (!wanted) { toast('先选一个模板', 'warn'); return; }
+    var list = (S.promptPresets && S.promptPresets[kind]) || [];
+    var found = null;
+    list.forEach(function (item) { if (item.id === wanted) found = item; });
+    if (!found) { toast('模板没找到', 'err'); return; }
+    box.value = found.text || '';
+    setText(dom.promptModalHint, '已套用「' + (found.name || found.id) + '」，点「保存」后生效');
+  }
+
   function openPromptModal() {
     var p = currentPersona();
     if (!p) { toast('没有选中的人设', 'warn'); return; }
@@ -1768,6 +1814,7 @@
     dom.promptMemeText.value = p.meme_prompt || '';
     clearFieldErrors(PERSONA_FIELDS);
     setText(dom.promptModalHint, '');
+    loadPromptPresets();
     switchPromptTab('split');
     dom.promptModal.hidden = false;
   }
@@ -4767,6 +4814,23 @@
     if (dom.promptModalClose) dom.promptModalClose.addEventListener('click', closePromptModal);
     if (dom.btnPromptSave) dom.btnPromptSave.addEventListener('click', savePromptModal);
     if (dom.btnPromptReset) dom.btnPromptReset.addEventListener('click', resetPromptModal);
+    if (dom.btnPromptSplitPreset) {
+      dom.btnPromptSplitPreset.addEventListener('click', function () { applyPreset('split'); });
+    }
+    if (dom.btnPromptMemePreset) {
+      dom.btnPromptMemePreset.addEventListener('click', function () { applyPreset('meme'); });
+    }
+    // 手动改过编辑框就把模板选择退回"自定义"，避免选择器和内容对不上
+    if (dom.promptSplitText) {
+      dom.promptSplitText.addEventListener('input', function () {
+        if (dom.promptSplitPreset) dom.promptSplitPreset.value = '';
+      });
+    }
+    if (dom.promptMemeText) {
+      dom.promptMemeText.addEventListener('input', function () {
+        if (dom.promptMemePreset) dom.promptMemePreset.value = '';
+      });
+    }
     if (dom.promptTabs) {
       dom.promptTabs.addEventListener('click', function (ev) {
         var btn = ev.target.closest ? ev.target.closest('.tab') : null;

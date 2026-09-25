@@ -91,8 +91,11 @@ class ReplyPlan:
 
     @property
     def memory_text(self) -> str:
-        """记忆里存什么：自然文本 + ``[表情：x]``，**不存 JSON**。"""
-        return compose_memory_text(self.texts, self.meme)
+        """记忆里存什么：拼成一行的普通文本，**不存 JSON、也不记表情标注**。
+
+        见 :func:`qlark.chat.reply_format.compose_memory_text` 里对"为什么"的说明。
+        """
+        return compose_memory_text(self.texts)
 
 
 def _strip_image_placeholders(text: str) -> str:

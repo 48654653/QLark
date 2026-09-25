@@ -107,6 +107,22 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="从文件读取 JS 表达式（推荐：避免 PowerShell 吃掉引号）",
     )
+    parser.add_argument(
+        "--await-ms",
+        type=float,
+        default=0.0,
+        help=(
+            "异步探针：JS 里把自己算好的结果写进 window.__probe，"
+            "然后等最多这么多毫秒再读回来。pywebview 的 evaluate_js **不会**"
+            "等 Promise，所以需要异步的探针必须用这个方式。"
+        ),
+    )
+    parser.add_argument(
+        "--await-poll",
+        type=float,
+        default=0.25,
+        help="异步探针的轮询间隔（秒）",
+    )
     args = parser.parse_args(argv)
 
     js_source = args.js
@@ -117,6 +133,39 @@ def main(argv: list[str] | None = None) -> int:
     result: dict = {}
     probe: dict = {}
 
+    def read_async_probe(window, timeout_ms: float, poll: float) -> object:
+        """等异步探针把结果写进 DOM，再读回来。
+
+        JS 端约定：
+
+        .. code-block:: js
+
+            (function () {
+              var box = document.createElement('div');
+              box.id = '__probe';
+              box.style.display = 'none';
+              document.body.appendChild(box);
+              someAsyncCall().then(function (r) { box.textContent = JSON.stringify(r); });
+            })()
+
+        **为什么走 DOM 而不是 ``window.__probe``**：实测 pywebview 的
+        ``evaluate_js`` 之间不共享 ``window`` 上的自定义属性（写入后再读拿到的是
+        空），但同一个文档的 DOM 是共享的 —— 而 PROBE_JS 早就证明了读 DOM 可靠。
+        ``evaluate_js`` 也**不会**等 Promise，所以异步结果只能这样取。
+        """
+        deadline = time.monotonic() + max(0.0, timeout_ms) / 1000.0
+        reader = (
+            "(function(){var b=document.getElementById('__probe');"
+            "return b?b.textContent:null;})()"
+        )
+        while True:
+            value = window.evaluate_js(reader)
+            if value:
+                return value
+            if time.monotonic() >= deadline:
+                return f"<超时 {timeout_ms:.0f}ms 仍未拿到结果>"
+            time.sleep(max(0.05, poll))
+
     def on_ready(window) -> None:
         def worker() -> None:
             time.sleep(args.warmup)
@@ -126,7 +175,13 @@ def main(argv: list[str] | None = None) -> int:
                 raw = window.evaluate_js(PROBE_JS)
                 result.update(json.loads(raw))
                 if js_source:
-                    probe["value"] = window.evaluate_js(js_source)
+                    # 先把探针跑起来（异步的话它会自己往 #__probe 里写结果），
+                    # 再决定是直接取返回值还是轮询等它 —— 顺序不能反。
+                    direct = window.evaluate_js(js_source)
+                    if args.await_ms > 0:
+                        probe["value"] = read_async_probe(window, args.await_ms, args.await_poll)
+                    else:
+                        probe["value"] = direct
             except Exception as exc:
                 result["error"] = str(exc)
             if args.hold:

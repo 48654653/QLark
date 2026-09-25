@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 from .app import Application
+from .chat.reply_format import MEME_PRESETS, SPLIT_PRESETS
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,17 @@ class JsApi:
         传入编辑框里的文本就按它拼，改完没保存也能看到效果。
         """
         return self._app.preview_prompt(int(uid), str(split_prompt or ""), str(meme_prompt or ""))
+
+    def get_prompt_presets(self) -> dict[str, Any]:
+        """内置提示词模板清单（多段对话 / 发送表情各若干套）。
+
+        挑一套会**填进编辑框**，之后仍可以继续改；留空则用每套里的第一套。
+        """
+        return {
+            "ok": True,
+            "split": [dict(item) for item in SPLIT_PRESETS],
+            "meme": [dict(item) for item in MEME_PRESETS],
+        }
 
     # ------------------------------------------------------------------ 账号
     def list_accounts(self) -> dict[str, Any]:

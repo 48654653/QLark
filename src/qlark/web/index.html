@@ -967,17 +967,29 @@
 
     <div class="modal-body">
       <div class="prompt-pane" data-prompt-pane="split">
-        <span class="field-hint">这一整段会在**掷中多段连发**时注入 system 提示词。留空 = 用内置的那套。</span>
-        <textarea class="textarea mono" id="promptSplitText" rows="10" spellcheck="false"
-                  placeholder="留空 = 使用内置提示词"></textarea>
+        <div class="row-inline">
+          <select class="input" id="promptSplitPreset">
+            <option value="">（自定义 / 未选择模板）</option>
+          </select>
+          <button class="btn" id="btnPromptSplitPreset" type="button">套用模板</button>
+        </div>
+        <span class="field-hint">这一整段会在**掷中多段连发**时注入 system 提示词。套用模板后仍可继续改；清空则用内置的默认模板。</span>
+        <textarea class="textarea mono" id="promptSplitText" rows="9" spellcheck="false"
+                  placeholder="留空 = 使用内置的默认模板"></textarea>
         <span class="field-hint">可用占位符：<code class="mono">{max_messages}</code> 条数上限、<code class="mono">{chars}</code> 单条字数建议</span>
         <span class="field-err" id="ePromptSplit" hidden></span>
       </div>
 
       <div class="prompt-pane" data-prompt-pane="meme" hidden>
-        <span class="field-hint">这一整段会在**掷中发送表情**时注入 system 提示词。留空 = 用内置的那套。</span>
-        <textarea class="textarea mono" id="promptMemeText" rows="10" spellcheck="false"
-                  placeholder="留空 = 使用内置提示词"></textarea>
+        <div class="row-inline">
+          <select class="input" id="promptMemePreset">
+            <option value="">（自定义 / 未选择模板）</option>
+          </select>
+          <button class="btn" id="btnPromptMemePreset" type="button">套用模板</button>
+        </div>
+        <span class="field-hint">这一整段会在**掷中发送表情**时注入 system 提示词。套用模板后仍可继续改；清空则用内置的默认模板。</span>
+        <textarea class="textarea mono" id="promptMemeText" rows="9" spellcheck="false"
+                  placeholder="留空 = 使用内置的默认模板"></textarea>
         <span class="field-hint">可用占位符：<code class="mono">{emotions}</code> 自动填当前表情目录里识别到的情绪</span>
         <span class="field-err" id="ePromptMeme" hidden></span>
       </div>
