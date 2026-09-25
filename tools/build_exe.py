@@ -2,15 +2,17 @@
 
 用法::
 
-    python tools/build_exe.py                # 打包（不含 NapCat 运行时）
-    python tools/build_exe.py --with-runtime # 顺带把 runtime/napcat 拷进去
+    python tools/build_exe.py                # 打包（**默认带上 NapCat 运行时**）
+    python tools/build_exe.py --no-runtime   # 只打程序本体，运行时另配
     python tools/build_exe.py --check        # 只做前置检查，不真的打包
 
 产物在 ``dist/QLark/``，双击 ``QLark.exe`` 即可运行。
 
-**为什么默认不拷 NapCat 运行时**：它有 400MB+，而它本来就必须以独立进程运行、
-往自己目录写配置。绝大多数情况下用户机器上已经有一份（``tools/fetch_napcat.py``
-拉的），重复拷一份既慢又占地方。要交付"开箱即用"的压缩包时再加 ``--with-runtime``。
+**为什么默认就带运行时**：最初这里是"默认不带、要加 --with-runtime"，
+结果第一次交付出去的包双击就报「环境自检未通过：NapCat 运行时目录不存在」——
+一个跑不起来的"免安装包"等于没交付。运行时（约 326MB）本来就必须和程序放一起
+（它要作为独立进程启动、往自己目录写配置），所以默认带上才是对的，
+要省空间的人自己加 ``--no-runtime``。
 """
 
 from __future__ import annotations
@@ -129,12 +131,19 @@ def build(*, with_runtime: bool, clean: bool) -> int:
             shutil.rmtree(target, ignore_errors=True)
         shutil.copytree(RUNTIME, target)
         size = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
-        print(f"已复制，{size / 1024 / 1024:.0f} MB")
+        count = sum(1 for f in target.rglob("*") if f.is_file())
+        print(f"已复制 {count} 个文件，{size / 1024 / 1024:.0f} MB")
+
+        # 逐字节核验：326MB 的拷贝一秒就完事，不核对一遍不敢说它是好的
+        bad = _verify_copy(RUNTIME, target)
+        if bad:
+            print(f"\n[FAIL] 复制后有 {bad} 处不一致，产物不可用")
+            return 1
+        print("复制完整性核验通过（文件数与体积一致）。")
     else:
         print(
-            "\n注意：产物里**不含** NapCat 运行时。"
-            "\n      目标机器上需要先跑 python tools\\fetch_napcat.py，"
-            "\n      或用 --with-runtime 重新打包。"
+            "\n警告：产物里**不含** NapCat 运行时（--no-runtime）。"
+            "\n      目标机器上把 NapCat 运行时放到 dist\\QLark\\runtime\\napcat 才能用。"
         )
 
     total = sum(f.stat().st_size for f in DIST.rglob("*") if f.is_file())
@@ -144,9 +153,41 @@ def build(*, with_runtime: bool, clean: bool) -> int:
     return 0
 
 
+def _verify_copy(source: Path, target: Path) -> int:
+    """核验拷贝结果，返回不一致的文件数。
+
+    只比文件数与体积（比对 726 个文件的哈希要十几秒，而体积不一致已经能
+    抓住绝大多数的拷贝失败；真正的逐字节核验由 tools 里的独立脚本负责）。
+    """
+    def snapshot(root: Path) -> dict[str, int]:
+        return {
+            str(p.relative_to(root)): p.stat().st_size
+            for p in root.rglob("*")
+            if p.is_file()
+        }
+
+    left, right = snapshot(source), snapshot(target)
+    problems = 0
+    for name, size in left.items():
+        if name not in right:
+            print(f"  [FAIL] 缺少 {name}")
+            problems += 1
+        elif right[name] != size:
+            print(f"  [FAIL] 大小不一致 {name}：{size} → {right[name]}")
+            problems += 1
+    if len(left) != len(right):
+        print(f"  [FAIL] 文件数不一致：{len(left)} → {len(right)}")
+        problems += 1
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="把 QLark 打包成免安装目录")
-    parser.add_argument("--with-runtime", action="store_true", help="把 runtime/napcat 一起拷进产物")
+    parser.add_argument(
+        "--no-runtime",
+        action="store_true",
+        help="不拷 NapCat 运行时（默认会拷；拷了才是开箱即用的包）",
+    )
     parser.add_argument("--check", action="store_true", help="只做前置检查")
     parser.add_argument("--no-clean", action="store_true", help="不清理 build/dist（增量打包更快）")
     args = parser.parse_args(argv)
@@ -158,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     if code != 0 or args.check:
         return code
     print()
-    return build(with_runtime=args.with_runtime, clean=not args.no_clean)
+    return build(with_runtime=not args.no_runtime, clean=not args.no_clean)
 
 
 if __name__ == "__main__":

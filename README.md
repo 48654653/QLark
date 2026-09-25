@@ -335,28 +335,35 @@ python tools/showcase.py
 
 ```powershell
 python tools\build_exe.py --check        # 只做前置检查
-python tools\build_exe.py                # 打包（不含 NapCat 运行时）
-python tools\build_exe.py --with-runtime # 顺带把 runtime/napcat 拷进去（交付用）
+python tools\build_exe.py                # 打包（**默认带上 NapCat 运行时**）
+python tools\build_exe.py --no-runtime   # 只打程序本体，运行时另配
 ```
 
-产物在 `dist/QLark/`，双击 `QLark.exe` 即可运行（**没有黑框**）。约 39 MB
-（不含 NapCat 运行时）。
+产物在 `dist/QLark/`，双击 `QLark.exe` 即可运行（**没有黑框**）。
+带运行时约 365 MB，不带约 39 MB。
 
 几个刻意的取舍：
 
+- **默认就带 NapCat 运行时**。最初这里是"默认不带、要加 `--with-runtime`"，
+  结果第一次交付出去的包双击就报「环境自检未通过：NapCat 运行时目录不存在」——
+  一个跑不起来的"免安装包"等于没交付。运行时本来就必须和程序放在一起
+  （它要作为独立进程启动、往自己目录写配置），所以默认带上才是对的。
+  打包脚本会在复制后**核验文件数与体积**，不一致就直接判失败。
 - **onedir 而不是 onefile**：onefile 每次启动都要把 ~150MB 解压到临时目录，
   而这个应用要频繁重启（切账号、改端口），那个延迟很难受。而且 NapCat 运行时
-  （400MB+）**无论如何都得放在 exe 外面**（它要作为独立进程启动、往自己目录写配置），
-  onefile 省不掉"一个文件夹"这件事。
+  无论如何都得放在 exe 外面，onefile 省不掉"一个文件夹"这件事。
 - **不用 UPX**：UPX 压过的 exe 更容易被杀软误报（需求规格 §9.4 已经提过这个风险）。
-- **默认不拷 NapCat 运行时**：它 400MB+，目标机器上用
-  `python tools\fetch_napcat.py` 拉一次即可。要交付"开箱即用"的压缩包时再加
-  `--with-runtime`。
 - 打包后**程序目录与用户数据目录分离**：即使装在 `Program Files` 这种只读位置，
   配置和记忆也照常落在 `%LOCALAPPDATA%\QLark\`。
 
 > 打包完成后脚本会检查产物里是否真的带上了前端资源与 `schema.sql` ——
 > 少了任何一个，程序会在启动时才崩，那种失败很难查。
+
+> ⚠️ **请把产物放在可写的位置**（例如 `D:\QLark`、桌面、`%LOCALAPPDATA%`），
+> **不要放进 `Program Files`**。QLark 自己把配置与记忆写在 `%LOCALAPPDATA%\QLark\`
+> （程序目录只读也没关系），但**NapCat 会往自己目录里写** `config/`、`cache/`、
+> `data/` —— 放在只读目录里它会写不进去。这是"免安装目录"这个形态的固有限制，
+> 不是 bug；要做到"装进 Program Files 也能跑"，得在首启时把运行时复制到用户目录。
 
 ---
 

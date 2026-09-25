@@ -42,6 +42,21 @@ _WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 # --------------------------------------------------------------------------- #
 # 单项探测
 # --------------------------------------------------------------------------- #
+def _runtime_hint(root: Path) -> str:
+    """告诉用户**该怎么办**，而不只是"哪里不对"。
+
+    打包版尤其需要：用户拿到的是一个文件夹，机器上很可能没有 Python，
+    所以"跑一下 tools/fetch_napcat.py"这种建议对他们毫无用处。
+    """
+    if paths.is_frozen():
+        return (
+            "这是打包版，运行时需要和程序放在一起。两种办法："
+            "① 把已有的 NapCat 运行时整个目录拷到上面这个路径；"
+            "② 在源码目录重新运行 python tools\\build_exe.py（默认就会带上运行时）。"
+        )
+    return "先运行 python tools\\fetch_napcat.py 一键下载并补齐依赖。"
+
+
 def check_napcat_runtime() -> EnvItem:
     root = paths.napcat_dir()
     if not root.is_dir():
@@ -49,7 +64,7 @@ def check_napcat_runtime() -> EnvItem:
             key="napcat_runtime",
             label="NapCat 运行时",
             ok=False,
-            detail=f"目录不存在：{root}",
+            detail=f"目录不存在：{root}。{_runtime_hint(root)}",
             fixable=False,
         )
     missing = [name for name in _NAPCAT_REQUIRED if not (root / name).is_file()]
@@ -58,7 +73,7 @@ def check_napcat_runtime() -> EnvItem:
             key="napcat_runtime",
             label="NapCat 运行时",
             ok=False,
-            detail="缺少文件：" + "、".join(missing),
+            detail="缺少文件：" + "、".join(missing) + "。" + _runtime_hint(root),
             fixable=False,
         )
     size_mb = (root / "wrapper.node").stat().st_size / 1024 / 1024
