@@ -230,8 +230,11 @@ def test_exchange_is_persisted_and_counted(ready) -> None:
 
     rounds = ready.bot.pipeline.store.recent_rounds(memory_key("group:123456", 1), 5)
     assert [role for role, _ in rounds] == ["user", "assistant"]
-    # 群聊落库时带上发送者名字：一个群共用一份记忆，不带名字模型分不清谁说的
-    assert rounds[0][1] == "测试用户：记一下这句话"
+    # 群聊落库时带「昵称 / 时间 / 消息」三行块：一个群共用一份记忆，
+    # 不带昵称模型分不清谁说的（格式细节见 test_message_label.py）
+    assert rounds[0][1].startswith("昵称：测试用户")
+    assert "\n时间：" in rounds[0][1]
+    assert rounds[0][1].rstrip().endswith("消息：记一下这句话")
 
 
 def test_memory_is_isolated_between_groups(ready) -> None:
@@ -266,7 +269,7 @@ def test_context_carries_history_to_the_model(ready, fake_openai: FakeOpenAI) ->
     )
     assert "第一句" in joined, "历史没有带上"
     assert "收到：" in joined, "上一轮的回复没有带上"
-    assert messages[-1]["content"] == "测试用户：第二句"
+    assert messages[-1]["content"].rstrip().endswith("消息：第二句")
 
 
 # --------------------------------------------------------------------------- #

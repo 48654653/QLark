@@ -16,6 +16,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 from ..core.models import LogSource
@@ -63,6 +64,43 @@ def _strip_image_placeholders(text: str) -> str:
     """
     cleaned = str(text or "").replace(IMAGE_PLACEHOLDER, " ")
     return " ".join(cleaned.split())
+
+
+def format_stamp(timestamp: float | int | None) -> str:
+    """按 ``2026-9-25 17:00`` 格式化时间。
+
+    月、日**不补零**（用户要的就是 ``9-25`` 不是 ``09-25``），时、分补零。
+    Python 的 ``strftime`` 在 Windows 上不支持 ``%-m``，所以这里手动拼。
+    """
+    try:
+        moment = datetime.fromtimestamp(float(timestamp)) if timestamp else datetime.now()
+    except (TypeError, ValueError, OSError):
+        moment = datetime.now()
+    return f"{moment.year}-{moment.month}-{moment.day} {moment.hour:02d}:{moment.minute:02d}"
+
+
+def clean_sender_name(raw: str) -> str:
+    """把昵称清理成可以安全放进 ``昵称：`` 那一行的形式。
+
+    换行/制表会破坏三行结构；顺手限长，免得有人用超长昵称把每条消息都撑大。
+    """
+    return " ".join(str(raw or "").split())[:32].strip("：: ").strip()
+
+
+def build_labeled_message(name: str, timestamp: float | int | None, text: str) -> str:
+    """把一条消息包成带昵称与时间的块。
+
+    .. code-block:: text
+
+        昵称：毛糙蛋
+        时间：2026-9-25 17:00
+        消息：早上好啊
+
+    为什么要这么做：**群聊**里所有人共用一份记忆（规格 §6.1），不带昵称的话
+    模型根本分不清哪句是谁说的；**时间**则让它能理解"早上好"是几点的早上好、
+    是不是隔了很久才回。私聊虽然只有一个人，但时间同样有意义。
+    """
+    return f"昵称：{name}\n时间：{format_stamp(timestamp)}\n消息：{text}"
 
 
 def _replace_user_content(
@@ -326,13 +364,12 @@ class MessagePipeline:
             return
 
         persona = self.personas.get(persona_uid) or {}
-        speaker = self._speaker_prefix(event)
         base_text: str = parsed.text_for_memory() or (
             IMAGE_PLACEHOLDER if parsed.has_image else ""
         )
-        # 群聊：把说话人写进内容本身。这一条同时作用于"发给模型的当前消息"和
-        # "落库的历史"，两边保持一致，模型回看历史时也能分清谁说了什么。
-        memory_text = f"{speaker}：{base_text}" if speaker and base_text else base_text
+        # 包成「昵称 / 时间 / 消息」三行块。这一条同时作用于"发给模型的当前消息"
+        # 和"落库的历史"，两边保持一致，模型回看历史时也能分清谁在什么时候说了什么。
+        memory_text = self._label_message(event, base_text)
 
         # 风控两条都放在调用模型**之前**：既然要拦，就别先花掉一次 token
         blocked_word = find_blocked_word(memory_text, self.settings.get("blocked_words") or [])
@@ -366,8 +403,7 @@ class MessagePipeline:
         if prepared:
             # 多模态：文本里那条 [图片] 占位要去掉，否则模型会看到"占位 + 真图"
             visible = _strip_image_placeholders(parsed.text) or "请看这张图片。"
-            if speaker:
-                visible = f"{speaker}：{visible}"
+            visible = self._label_message(event, visible)
             user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
         else:
             user_content = memory_text
@@ -430,30 +466,28 @@ class MessagePipeline:
         self._maybe_summarize(key)
 
     # ------------------------------------------------------------------ 群聊
-    def _speaker_prefix(self, event: MessageEvent) -> str:
-        """群聊里给消息加上发送者名字，私聊返回空串。
+    def _label_message(self, event: MessageEvent, text: str) -> str:
+        """把消息包成「昵称 / 时间 / 消息」三行块（群聊和私聊都做）。
 
-        为什么必须加：一个群**共用一份记忆**（需求规格 §6.1），所有人的话都落在
-        同一条上下文里。不带名字的话模型看到的是
+        为什么群聊非做不可：一个群**共用一份记忆**（需求规格 §6.1），所有人的话
+        都落在同一条上下文里。不带昵称的话模型看到的是
 
             user: 你好呀 / assistant: 你好！ / user: 我不吃香菜
 
         它根本不知道这三句分别是谁说的 —— 会把 A 的忌口记到 B 头上，也没法回答
-        "刚才谁说要吃什么"。加上名字之后历史本身就是清楚的。
+        "刚才谁说要吃什么"。
 
-        私聊不加：那里只有一个人，加了纯属浪费 token。
+        为什么私聊也带上时间：只有一个人，昵称意义不大，但**时间有意义** ——
+        模型能据此判断"早上好"是几点的早上好、这句是不是隔了两小时才回。
         """
-        if not event.is_group:
-            return ""
-        if not bool(self.settings.get("group_prefix_sender", True)):
-            return ""
-        raw = str(event.sender_name or "").strip()
-        if not raw:
-            return ""
-        # 名字里带换行/制表会破坏 "名字：内容" 这个结构；顺手限个长度，
-        # 免得有人用超长昵称把每条消息都撑大
-        cleaned = " ".join(raw.split())[:32]
-        return cleaned.strip("：: ").strip()
+        if not text:
+            return text
+        if not bool(self.settings.get("message_label", True)):
+            return text
+        name = clean_sender_name(event.sender_name)
+        if not name:
+            return text
+        return build_labeled_message(name, event.time, text)
 
     # ------------------------------------------------------------------ 记忆
     def _context_budget(self) -> int:

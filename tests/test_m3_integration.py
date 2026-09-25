@@ -195,8 +195,8 @@ def test_persona_system_prompt_reaches_the_model(live, fake_openai: FakeOpenAI) 
     messages = requests[-1]["messages"]
     assert messages[0]["role"] == "system"
     assert "傲娇女仆" in messages[0]["content"]
-    # 默认是群聊消息，所以正文带着发送者名字前缀
-    assert messages[-1]["content"] == "测试用户：你好"
+    # 默认是群聊消息，正文带着「昵称 / 时间 / 消息」三行块
+    assert messages[-1]["content"].rstrip().endswith("消息：你好")
 
 
 def test_persona_memory_is_isolated(live) -> None:

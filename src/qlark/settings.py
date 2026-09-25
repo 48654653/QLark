@@ -38,10 +38,11 @@ DEFAULTS: dict[str, Any] = {
     "reply_quote_group": False,
     "max_reply_chars": 900,
     "notify_error_private": True,
-    #: 群聊里是否在消息前带上发送者名字（``小明：你好呀``）。
-    #: **强烈建议保持开启**：一个群共用一份记忆，不带名字的话模型分不清
-    #: 哪句是谁说的，会把 A 的偏好记到 B 头上。私聊不加（只有一个人）。
-    "group_prefix_sender": True,
+    #: 消息是否包成「昵称 / 时间 / 消息」三行块（群聊与私聊都生效）。
+    #: **强烈建议保持开启**：一个群共用一份记忆，不带昵称的话模型分不清
+    #: 哪句是谁说的，会把 A 的偏好记到 B 头上；时间则让它能理解"早上好"
+    #: 是几点的早上好、这句是不是隔了两小时才回。
+    "message_label": True,
     "ignored_users": [],
     "ignored_groups": [],
     # ---- 记忆 / 人设（M4）----
@@ -272,12 +273,12 @@ class Settings:
         self.set("reply_quote_group", bool(value))
 
     @property
-    def group_prefix_sender(self) -> bool:
-        return bool(self.get("group_prefix_sender", True))
+    def message_label(self) -> bool:
+        return bool(self.get("message_label", True))
 
-    @group_prefix_sender.setter
-    def group_prefix_sender(self, value: bool) -> None:
-        self.set("group_prefix_sender", bool(value))
+    @message_label.setter
+    def message_label(self, value: bool) -> None:
+        self.set("message_label", bool(value))
 
     @property
     def max_reply_chars(self) -> int:

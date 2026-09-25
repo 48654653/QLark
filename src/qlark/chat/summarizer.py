@@ -96,7 +96,9 @@ def build_material(old_summary: str, rows: list[dict[str, Any]]) -> str:
         content = str(row.get("content") or "").strip()
         if not content:
             continue
-        # 图片在记忆里本来就是 [图片] 占位，这里再兜一次，绝不把 base64 写进摘要
+        # 用户消息可能是「昵称 / 时间 / 消息」三行块（见 pipeline.build_labeled_message），
+        # 压成一行才不会把材料的"每行一条"结构打乱。
+        content = " ".join(content.split())
         if len(content) > 2000:
             content = content[:2000] + "…"
         lines.append(f"{role}：{content}")

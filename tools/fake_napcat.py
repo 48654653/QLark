@@ -314,12 +314,16 @@ def build_message_event(
     card: str = "",
     role: str = "member",
     message_id: int | None = None,
+    time_ms: int | None = None,
 ) -> dict:
     """构造一条 OneBot 11 消息事件。
 
     ``card`` 是群名片：真 NapCat 在群消息里会带上它（没设名片时是空串），
     而 QLark 取发送者名字时**名片优先于昵称**。替身以前把它写死成空串，
     于是"名片优先"这条逻辑在测试里根本走不到。
+
+    ``time_ms`` 是消息时间戳（秒）。可以用来断言时间格式化结果 ——
+    不指定就用当前时间，与真身一致。
     """
     if segments is None:
         segments = []
@@ -338,7 +342,7 @@ def build_message_event(
         "message": segments,
         "raw_message": text,
         "font": 0,
-        "time": int(time.time()),
+        "time": int(time_ms if time_ms is not None else time.time()),
         "sender": {
             "user_id": _as_number(user_id),
             "nickname": nickname,
@@ -472,6 +476,7 @@ def make_handler(qq: str, token: str, port: int = 0) -> type[BaseHTTPRequestHand
                     card=str(body.get("card") or ""),
                     role=str(body.get("role") or "member"),
                     message_id=body.get("message_id"),
+                    time_ms=body.get("time_ms"),
                 )
                 pushed = push_event(event)
                 emit(f"[info] [Fake] 注入消息 event_id={event['message_id']} pushed={pushed}")
