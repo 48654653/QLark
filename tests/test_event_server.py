@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import http.client
 import json
 
@@ -26,8 +27,49 @@ TOKEN = "qlark-local"
 
 
 def sign(token: str, body: bytes) -> str:
-    """复刻 NapCat 的签名方式：sha1(token + body) 的十六进制。"""
-    return "sha1=" + hashlib.sha1(token.encode("utf-8") + body).hexdigest()
+    """复刻 NapCat 的签名：**HMAC-SHA1（token 作密钥）**。
+
+    NapCat 源码里是 ``import { createHmac as _L } from "crypto"`` 然后
+    ``_L("sha1", token).update(body).digest("hex")``。
+
+    注意**不是** ``sha1(token + body)`` —— 那个写法能和同样写错的自写脚本
+    互相"验证通过"，却对不上真身发来的签名（每条事件 401）。
+    """
+    return "sha1=" + hmac.new(token.encode("utf-8"), body, hashlib.sha1).hexdigest()
+
+
+#: 由 **Node 的 crypto**（与 NapCat 同一个库）算出的参考值，用来钉死算法。
+#: 命令：node -e "console.log(require('crypto').createHmac('sha1','qlark-local')
+#:        .update('{\"post_type\":\"message\",\"message_id\":1}').digest('hex'))"
+NODE_REFERENCE_TOKEN = "qlark-local"
+NODE_REFERENCE_BODY = b'{"post_type":"message","message_id":1}'
+NODE_REFERENCE_SIGNATURE = "3aeb48cc22f3c4f7208f2353606bbebdcea1f1bd"
+
+
+def test_signature_algorithm_matches_node_reference() -> None:
+    """签名算法必须与 NapCat 用的 Node crypto 逐位一致。
+
+    这是**跨实现**的已知答案测试：期望值由 Node 生成、硬编码在这里。
+    如果哪天有人（包括我）把算法改成 ``sha1(token + body)`` 之类的"看起来也对"
+    写法，这条会立刻失败 —— 而不是等到真机上每条事件都 401 才发现。
+    """
+    produced = sign(NODE_REFERENCE_TOKEN, NODE_REFERENCE_BODY)
+    assert produced == f"sha1={NODE_REFERENCE_SIGNATURE}", (
+        f"签名算法与 NapCat 不一致：得到 {produced}"
+    )
+
+
+def test_wrong_algorithm_is_not_accepted(server: EventServer, events: list[dict]) -> None:
+    """``sha1(token + body)`` 这种错误写法必须被拒（防止回归到旧实现）。"""
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        raw = b'{"post_type":"message"}'
+        naive = "sha1=" + hashlib.sha1(TOKEN.encode("utf-8") + raw).hexdigest()
+        status, _b, _r = post(conn, {"post_type": "message"}, {"x-signature": naive})
+    finally:
+        conn.close()
+    assert status == 401
+    assert events == []
 
 
 @pytest.fixture

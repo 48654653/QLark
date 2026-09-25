@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -237,6 +238,20 @@ def event_endpoint(qq: str) -> tuple[str, str] | None:
     return None
 
 
+def sign_body(token: str, body: bytes) -> str:
+    """按**真身**的算法给事件体签名。
+
+    NapCat 用的是 ``createHmac("sha1", token).update(body)``，即
+    **HMAC-SHA1（token 作密钥）**，返回值前缀 ``sha1=``。
+
+    这里踩过两次坑：先是漏了 x-signature（用 Bearer），后来又把算法写成
+    ``sha1(token + body)`` —— 后者能和自写脚本互相"验证通过"，却对不上真身，
+    表现为每条事件 401。
+    """
+    digest = hmac.new(token.encode("utf-8"), body, hashlib.sha1).hexdigest()
+    return f"sha1={digest}"
+
+
 def push_event(payload: dict) -> bool:
     """把一条事件 POST 给 QLark 的事件服务。
 
@@ -266,8 +281,7 @@ def push_event(payload: dict) -> bool:
         conn.putheader("Content-Type", "application/json")
         conn.putheader("x-self-id", str(QQ))
         if token:
-            digest = hashlib.sha1(token.encode("utf-8") + body).hexdigest()
-            conn.putheader("x-signature", f"sha1={digest}")
+            conn.putheader("x-signature", sign_body(token, body))
         conn.putheader("Transfer-Encoding", "chunked")
         conn.endheaders()
         # 一个 chunk + 结束块；这就是 Node 在没设 Content-Length 时发的形态

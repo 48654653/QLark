@@ -130,18 +130,30 @@ class EventServer:
         支持两种方式，缺一不可：
 
         * ``Authorization: Bearer <token>`` —— OneBot 标准写法，也是我们测试用的；
-        * ``x-signature: sha1=<hex(sha1(token + 原始请求体))>`` —— **NapCat 的 httpClient
-          走的是这一种，它根本不发 ``Authorization``**。
+        * ``x-signature: sha1=<hex>`` —— **NapCat 的 httpClient 走的是这一种，
+          它根本不发 ``Authorization``**。
 
-        第二条是踩过的坑：只认 ``Authorization`` 时 QLark 会把 NapCat 推来的**每一条事件
-        都回 401**，机器人表现为"在线但完全不回复"，而日志里只有 NapCat 侧的报错。
+        第二条踩过两次坑，务必看清算法：
+
+        .. code-block:: js
+
+            import { createHmac as _L } from "crypto";        // NapCat 里的 _L 就是 createHmac
+            const s = _L("sha1", this.config.token);          // key = token
+            s.update(JSON.stringify(event));                  // message = 事件 JSON
+            headers["x-signature"] = "sha1=" + s.digest("hex");
+
+        也就是 **HMAC-SHA1（token 作密钥）**，不是 ``sha1(token + body)`` ——
+        后者能"看起来很像"并顺利通过自写脚本的验证，却对不上真身发来的签名，
+        表现为每条事件都回 401。
         """
         if not self.token:
             return True
         if header == f"Bearer {self.token}":
             return True
         if signature and signature.startswith("sha1="):
-            expected = hashlib.sha1(self.token.encode("utf-8") + body).hexdigest()
+            expected = hmac.new(
+                self.token.encode("utf-8"), body, hashlib.sha1
+            ).hexdigest()
             return hmac.compare_digest(signature[len("sha1=") :], expected)
         return False
 
