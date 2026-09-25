@@ -367,7 +367,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--check", action="store_true", help="只做前置检查")
     parser.add_argument("--no-clean", action="store_true", help="不清理 build/dist（增量打包更快）")
+    parser.add_argument(
+        "--clean-dir",
+        default="",
+        metavar="目录",
+        help=(
+            "只清理并校验指定目录，不打包。"
+            "发布前如果发现那份被运行过（程序会往自己目录写 QQ 号、token、登录态），用它清一遍。"
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.clean_dir:
+        target = Path(args.clean_dir).expanduser().resolve()
+        print("=" * 68)
+        print(f"清理发布目录：{target}")
+        print("=" * 68)
+        if not target.is_dir():
+            print(f"[FAIL] 目录不存在：{target}")
+            return 1
+        runtime = target / "runtime" / "napcat"
+        if runtime.is_dir():
+            sanitize_runtime(runtime)
+        else:
+            print("没找到 runtime/napcat，只做校验")
+        problems = verify_clean(target)
+        if problems:
+            print(f"\n[FAIL] 仍有 {len(problems)} 处个人数据：")
+            for item in problems[:30]:
+                print(f"  - {item}")
+            return 1
+        print("\n清理完成，复检通过：可以直接打包发出。")
+        return 0
 
     print("=" * 68)
     print("QLark 打包")
