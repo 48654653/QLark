@@ -35,6 +35,23 @@ OUTPUT_RULES_TITLE = "【输出规则】"
 #: 单条消息的建议长度上限（提示词里用）
 SUGGESTED_MESSAGE_CHARS = 40
 
+#: 内置的「多段对话」规则。人设里填了自定义提示词就整段替换掉它。
+#:
+#: 可用占位符：``{max_messages}``（条数上限）、``{chars}``（单条字数建议）
+SPLIT_RULE_DEFAULT = """**本轮请写成 2 条**（最多 {max_messages} 条）：一句话拆成两条来发，像真人打字时想到什么又补一句那样。
+只有在这句话短到根本没法拆（比如「嗯」「好的」「在的」）时，才写成 1 条。
+每条不超过 {chars} 字，不要包含换行，不要把一句话硬拆成两半。"""
+
+#: 内置的「发送表情」规则。占位符：``{emotions}``（可用情绪，顿号分隔）
+MEME_RULE_DEFAULT = """**本轮请配一个表情**，从这些里选一个：{emotions}
+要挑和你这句话情绪最贴合的那个。只有当这句话完全不适合配任何表情时，才省略这个键。"""
+
+#: 两个功能都关时，messages 只能有一条
+SINGLE_MESSAGE_RULE = "messages：必填，**只能写 1 条**，就是你要说的话。"
+
+#: 没开表情时必须明确禁止，否则模型可能自己加一个
+NO_MEME_RULE = "不要输出 meme 键。"
+
 #: ``` 或 ```json 围栏
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*|\s*```\s*$")
 #: 尾随逗号：{"a": 1,} / [1, 2,]
@@ -48,17 +65,37 @@ _QUOTED_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 # --------------------------------------------------------------------------- #
 # 输出规则提示词
 # --------------------------------------------------------------------------- #
+def _fill(template: str, **values: Any) -> str:
+    """给模板填占位符。
+
+    **填不进去就原样返回**：用户可能在自己写的提示词里用了花括号（比如给模型的
+    示例 JSON），`str.format` 会直接抛 ``KeyError`` / ``IndexError``。
+    为了一个占位符把整轮回复搞崩是不划算的，所以这里容错。
+    """
+    try:
+        return str(template).format(**values)
+    except (KeyError, IndexError, ValueError):
+        return str(template)
+
+
 def build_output_rules(
     *,
     split: bool,
     max_messages: int,
     meme: bool,
     emotions: Sequence[str],
+    split_prompt: str = "",
+    meme_prompt: str = "",
 ) -> str:
     """拼出注入 system 的【输出规则】块。
 
     两个功能都关时返回**空串** —— 一个字都不提，模型自然输出普通文本。
     这是"关掉之后不会被带跑"的第一道保障。
+
+    Args:
+        split_prompt: 人设里自定义的「多段对话」提示词；留空用
+            :data:`SPLIT_RULE_DEFAULT`。
+        meme_prompt: 同上，对应 :data:`MEME_RULE_DEFAULT`。
 
     .. important::
        **骰子已经掷过了，这里是命令式，不是许可式。**
@@ -72,43 +109,30 @@ def build_output_rules(
     if not split and not meme:
         return ""
 
+    limit = max(1, int(max_messages))
     lines: list[str] = [OUTPUT_RULES_TITLE]
     lines.append("你必须只输出一个 JSON 对象，不要有任何其它文字，也不要用代码块包裹。")
     lines.append('格式：{"messages": ["第一条"], "meme": "表情名"}')
     lines.append("")
 
-    index = 1
-    if split:
-        limit = max(1, int(max_messages))
-        if limit <= 1:
-            lines.append(f"{index}. messages：必填，**只能写 1 条**，就是你要说的话。")
-        else:
-            lines.append(f"{index}. messages：必填，你要说的话，每条一个字符串。")
-            lines.append(
-                f"   **本轮请写成 2 条**（最多 {limit} 条）：一句话拆成两条来发，"
-                "像真人打字时想到什么又补一句那样。"
-            )
-            lines.append(
-                "   只有在这句话短到根本没法拆（比如「嗯」「好的」「在的」）时，才写成 1 条。"
-            )
-            lines.append(
-                f"   每条不超过 {SUGGESTED_MESSAGE_CHARS} 字，不要包含换行，"
-                "不要把一句话硬拆成两半。"
-            )
-        index += 1
-    else:
-        lines.append(f"{index}. messages：必填，**只能写 1 条**，就是你要说的话。")
-        index += 1
-
-    if meme:
-        names = "、".join(str(name) for name in emotions)
-        lines.append(f"{index}. meme：**本轮请配一个表情**，从这些里选一个：{names}")
-        lines.append(
-            "   要挑和你这句话情绪最贴合的那个。"
-            "只有当这句话完全不适合配任何表情时，才省略这个键。"
+    # ---- ① messages ----
+    if split and limit > 1:
+        body = _fill(
+            split_prompt or SPLIT_RULE_DEFAULT,
+            max_messages=limit,
+            chars=SUGGESTED_MESSAGE_CHARS,
         )
     else:
-        lines.append(f"{index}. 不要输出 meme 键。")
+        body = SINGLE_MESSAGE_RULE
+    lines.append(f"1. messages：必填，你要说的话，每条一个字符串。")
+    lines.append(body)
+
+    # ---- ② meme ----
+    if meme:
+        names = "、".join(str(name) for name in emotions)
+        lines.append(f"2. meme：选填。" + _fill(meme_prompt or MEME_RULE_DEFAULT, emotions=names))
+    else:
+        lines.append(f"2. {NO_MEME_RULE}")
 
     return "\n".join(lines)
 
@@ -343,11 +367,65 @@ def compose_memory_text(messages: Sequence[str], meme: str | None) -> str:
     return body
 
 
+def build_preview(
+    *,
+    system_prompt: str,
+    rules: str,
+    enabled_note: str,
+    sample_message_id: str = "示例",
+) -> dict[str, Any]:
+    """拼出"即将发给 AI 的全部内容"的预览。
+
+    纯函数，方便测试与复用。真正发请求时的消息顺序是：
+
+    ``system(人设) → system(输出规则) → system(长期记忆摘要) → 历史 → user(当前消息)``
+    """
+    blocks: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "title": "人设提示词",
+            "content": str(system_prompt or "").strip() or "（这个人设还没写提示词）",
+        }
+    ]
+    if rules:
+        blocks.append(
+            {"role": "system", "title": "【输出规则】（按掷中拼出）", "content": rules}
+        )
+    blocks.append(
+        {
+            "role": "system",
+            "title": "长期记忆摘要",
+            "content": "（每个会话一份，由自动压缩生成；这里只做占位）",
+        }
+    )
+    blocks.append(
+        {
+            "role": "user",
+            "title": "用户消息（示例）",
+            "content": (
+                "昵称：毛糙蛋\n时间：2026-9-25 19:30\n消息：早上好啊"
+                if sample_message_id
+                else ""
+            ),
+        }
+    )
+    return {
+        "blocks": blocks,
+        "note": enabled_note,
+        "text": "\n\n".join(
+            f"──── {item['role']} · {item['title']} ────\n{item['content']}" for item in blocks
+        ),
+    }
+
+
 __all__ = [
+    "MEME_RULE_DEFAULT",
     "OUTPUT_RULES_TITLE",
+    "SPLIT_RULE_DEFAULT",
     "SUGGESTED_MESSAGE_CHARS",
     "ParsedReply",
     "build_output_rules",
+    "build_preview",
     "compose_memory_text",
     "parse_reply",
     "salvage",

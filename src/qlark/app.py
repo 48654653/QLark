@@ -15,6 +15,7 @@ from .bot import BotService
 from .chat.memes import MemeLibrary
 from .chat.memes import resolve_dir as resolve_meme_dir
 from .chat.personas import PersonaError
+from .chat.reply_format import build_output_rules, build_preview
 from .chat.store import MessageStore
 from .chat.summarizer import SUMMARY_MAX_CHARS
 from .core.models import AppState, Phase
@@ -205,6 +206,63 @@ class Application:
             return {"ok": True, "path": "", "cancelled": True}
         selected = result[0] if isinstance(result, (list, tuple)) else result
         return {"ok": True, "path": str(selected), "cancelled": False}
+
+    def preview_prompt(
+        self, uid: int, split_prompt: str = "", meme_prompt: str = ""
+    ) -> dict[str, Any]:
+        """预览"即将发给 AI 的全部内容"。
+
+        **这里两个功能都按"掷中"来拼**，否则大多数时候预览里什么都看不到 ——
+        用户点进来就是想看规则到底写了什么。
+
+        ``split_prompt`` / ``meme_prompt`` 传入时优先用它们，这样**改完还没保存
+        也能看到效果**；不传则用已保存的。
+
+        注意「长期记忆摘要」是**每个会话一份**的，预览里拿不到具体会话，
+        所以放一条说明占位，不能凭空造一个假的摘要出来骗人。
+        """
+        persona = self.personas.get(int(uid))
+        if persona is None:
+            return {"ok": False, "error": f"人设 {uid} 不存在"}
+
+        split_text = str(split_prompt or persona.get("split_prompt") or "")
+        meme_text = str(meme_prompt or persona.get("meme_prompt") or "")
+
+        library = self._meme_library()
+        emotions = library.emotions()
+        rules = build_output_rules(
+            split=True,
+            max_messages=self.settings.split_max_messages,
+            meme=True,
+            emotions=emotions or ["（表情目录里没有图片）"],
+            split_prompt=split_text,
+            meme_prompt=meme_text,
+        )
+
+        if not bool(persona.get("split_enabled")) and not bool(persona.get("meme_enabled")):
+            note = (
+                "这个人设两个开关都没勾选 —— 实际运行时**不会**注入【输出规则】，"
+                "模型只会输出普通文本。"
+            )
+        else:
+            note = (
+                f"多段连发概率 {self._fmt_chance(persona, 'split_chance', self.settings.split_chance)}、"
+                f"发送图片概率 {self._fmt_chance(persona, 'meme_chance', self.settings.meme_chance)}："
+                "掷不中的轮次【输出规则】整块都不会出现。"
+            )
+
+        blocks_and_note = build_preview(
+            system_prompt=str(persona.get("system_prompt") or ""),
+            rules=rules,
+            enabled_note=note,
+        )
+        return {"ok": True, **blocks_and_note}
+
+    def _fmt_chance(self, persona: dict[str, Any], key: str, fallback: float) -> str:
+        value = persona.get(key)
+        if value is None or value == "":
+            return f"{fallback * 100:.0f}%（跟随全局）"
+        return f"{float(value) * 100:.0f}%"
 
     # ================================================================== M3：账号
     def list_accounts(self) -> dict[str, Any]:

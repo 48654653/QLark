@@ -15,9 +15,15 @@ CREATE TABLE IF NOT EXISTS personas (
   temperature_override REAL    DEFAULT NULL,
   max_tokens_override  INTEGER DEFAULT NULL,
   -- 随机分段回复 / 表情包回复：**人设级**开关。
-  -- 谁"会用"这两种表达方式属于角色性格；"用得多频繁"是全局调参（见 config）。
+  -- 谁"会用"这两种表达方式属于角色性格；下面那几个数值留空则跟随全局设置。
   split_enabled        INTEGER DEFAULT 0,
   meme_enabled         INTEGER DEFAULT 0,
+  split_chance         REAL    DEFAULT NULL,
+  split_delay_ms       INTEGER DEFAULT NULL,
+  meme_chance          REAL    DEFAULT NULL,
+  -- 自定义提示词；留空 = 用内置的那套（见 chat/reply_format.py）
+  split_prompt         TEXT    DEFAULT NULL,
+  meme_prompt          TEXT    DEFAULT NULL,
   created_at           INTEGER NOT NULL
 );
 

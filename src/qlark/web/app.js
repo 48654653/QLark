@@ -140,7 +140,19 @@
     pTempOverride: $('pTempOverride'), ePTempOverride: $('ePTempOverride'),
     pTokensOverride: $('pTokensOverride'), ePTokensOverride: $('ePTokensOverride'),
     pSplitEnabled: $('pSplitEnabled'), pMemeEnabled: $('pMemeEnabled'),
-    pSplitSwitchText: $('pSplitSwitchText'),
+    pSplitDelay: $('pSplitDelay'), ePSplitDelay: $('ePSplitDelay'),
+    pSplitChance: $('pSplitChance'), ePSplitChance: $('ePSplitChance'),
+    pMemeChance: $('pMemeChance'), ePMemeChance: $('ePMemeChance'),
+    btnPersonaPromptEdit: $('btnPersonaPromptEdit'),
+
+    /* ----- 提示词编辑弹窗 ----- */
+    promptModal: $('promptModal'), promptModalClose: $('promptModalClose'),
+    promptModalWho: $('promptModalWho'), promptTabs: $('promptTabs'),
+    promptSplitText: $('promptSplitText'), ePromptSplit: $('ePromptSplit'),
+    promptMemeText: $('promptMemeText'), ePromptMeme: $('ePromptMeme'),
+    promptPreview: $('promptPreview'), promptPreviewNote: $('promptPreviewNote'),
+    btnPromptSave: $('btnPromptSave'), btnPromptReset: $('btnPromptReset'),
+    promptModalHint: $('promptModalHint'),
     btnPersonaSave: $('btnPersonaSave'), btnPersonaResetMemory: $('btnPersonaResetMemory'),
     personaEditHint: $('personaEditHint'),
     permStateTag: $('permStateTag'), permWhitelistOnly: $('permWhitelistOnly'),
@@ -217,7 +229,11 @@
     accountBusy: false,
     personas: [],          // list_personas 结果（已按 slot 升序）
     personaDefaultUid: null,
-    personaUid: null,      // 当前选中的人设 uid
+    personaUid: null,
+    /** 提示词编辑弹窗正在编辑哪个人设 */
+    promptUid: null,
+    /** 弹窗当前标签页：split | meme | preview */
+    promptTab: 'split',      // 当前选中的人设 uid
     perm: null,            // {whitelist_only, whitelist}
 
     /* ----- M4 ----- */
@@ -1010,7 +1026,12 @@
     enabled: ['pEnabled', null],
     model_override: ['pModelOverride', 'ePModelOverride'],
     temperature_override: ['pTempOverride', 'ePTempOverride'],
-    max_tokens_override: ['pTokensOverride', 'ePTokensOverride']
+    max_tokens_override: ['pTokensOverride', 'ePTokensOverride'],
+    split_chance: ['pSplitChance', 'ePSplitChance'],
+    split_delay_ms: ['pSplitDelay', 'ePSplitDelay'],
+    meme_chance: ['pMemeChance', 'ePMemeChance'],
+    split_prompt: ['promptSplitText', 'ePromptSplit'],
+    meme_prompt: ['promptMemeText', 'ePromptMeme']
   };
 
   function asStr(v) { return (v === undefined || v === null) ? '' : String(v); }
@@ -1191,6 +1212,7 @@
     dom.bSplitMax.value = String(cfg.split_max_messages);
     dom.bSplitDelay.value = String(cfg.split_delay_ms);
     paintMemeDirHint(cfg);
+    paintGlobalDefaultsHint();
     paintSplitSwitchText();
     dom.bErrorNotice.checked = !!cfg.error_notice_private;
     dom.bRateLimit.value = String(cfg.rate_limit_per_minute);
@@ -1511,6 +1533,16 @@
         model_override: hasText(p.model_override) ? String(p.model_override) : null,
         temperature_override: hasText(p.temperature_override) ? numOr(p.temperature_override, null) : null,
         max_tokens_override: hasText(p.max_tokens_override) ? numOr(p.max_tokens_override, null) : null,
+        // 这两个以前漏在这里，导致"勾选 → 保存 → 自动变回未勾选"：
+        // 后端存进去了，但前端重新拉列表时读不到，渲染出来就是未勾选。
+        // 以后往 personas 加字段，务必同步这里。
+        split_enabled: asBool(p.split_enabled, false),
+        meme_enabled: asBool(p.meme_enabled, false),
+        split_chance: hasText(p.split_chance) ? numOr(p.split_chance, null) : null,
+        split_delay_ms: hasText(p.split_delay_ms) ? numOr(p.split_delay_ms, null) : null,
+        meme_chance: hasText(p.meme_chance) ? numOr(p.meme_chance, null) : null,
+        split_prompt: asStr(p.split_prompt),
+        meme_prompt: asStr(p.meme_prompt),
         can_delete: asBool(p.can_delete, true),
         message_count: Math.max(0, numOr(p.message_count, 0))
       };
@@ -1614,7 +1646,11 @@
     dom.pTokensOverride.value = (p.max_tokens_override === null) ? '' : String(p.max_tokens_override);
     dom.pSplitEnabled.checked = !!p.split_enabled;
     dom.pMemeEnabled.checked = !!p.meme_enabled;
-    paintSplitSwitchText();
+    // 留空 = 跟随全局：空串而不是 0，否则会被当成"概率为 0，永不触发"
+    dom.pSplitDelay.value = (p.split_delay_ms === null) ? '' : String(p.split_delay_ms);
+    dom.pSplitChance.value = (p.split_chance === null) ? '' : String(Math.round(p.split_chance * 100));
+    dom.pMemeChance.value = (p.meme_chance === null) ? '' : String(Math.round(p.meme_chance * 100));
+    paintGlobalDefaultsHint();
 
     dom.btnPersonaSave.disabled = false;
     dom.btnPersonaResetMemory.disabled = false;
@@ -1708,11 +1744,108 @@
     });
   }
 
-  /** 把"允许偶尔连发几条"写成真实范围，而不是写死"两条"。 */
-  function paintSplitSwitchText() {
-    if (!dom.pSplitSwitchText) return;
-    var max = (S.model && Number(S.model.split_max_messages)) || 2;
-    setText(dom.pSplitSwitchText, max > 2 ? ('允许偶尔连发 2~' + max + ' 条') : '允许偶尔连发 2 条');
+  /** 把"留空 = 跟随全局"里的全局值填进 placeholder，免得看不出跟随的是什么。 */
+  function paintGlobalDefaultsHint() {
+    var m = S.model;
+    var rows = [
+      [dom.pSplitDelay, m ? m.split_delay_ms : 500],
+      [dom.pSplitChance, m ? Math.round(m.split_chance * 100) : 25],
+      [dom.pMemeChance, m ? Math.round(m.meme_chance * 100) : 20]
+    ];
+    rows.forEach(function (pair) {
+      if (pair[0]) pair[0].placeholder = '留空 = 跟随全局（' + pair[1] + '）';
+    });
+  }
+
+  /* ----- 提示词编辑弹窗 ----- */
+
+  function openPromptModal() {
+    var p = currentPersona();
+    if (!p) { toast('没有选中的人设', 'warn'); return; }
+    S.promptUid = p.uid;
+    setText(dom.promptModalWho, (p.name || '（未命名）') + ' · 人设' + p.slot);
+    dom.promptSplitText.value = p.split_prompt || '';
+    dom.promptMemeText.value = p.meme_prompt || '';
+    clearFieldErrors(PERSONA_FIELDS);
+    setText(dom.promptModalHint, '');
+    switchPromptTab('split');
+    dom.promptModal.hidden = false;
+  }
+
+  function closePromptModal() {
+    dom.promptModal.hidden = true;
+  }
+
+  function switchPromptTab(name) {
+    S.promptTab = name;
+    Array.prototype.forEach.call(dom.promptTabs.querySelectorAll('.tab'), function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-prompt-tab') === name);
+    });
+    var panes = dom.promptModal.querySelectorAll('[data-prompt-pane]');
+    Array.prototype.forEach.call(panes, function (pane) {
+      pane.hidden = pane.getAttribute('data-prompt-pane') !== name;
+    });
+    if (name === 'preview') loadPromptPreview();
+  }
+
+  function loadPromptPreview() {
+    var uid = S.promptUid;
+    if (uid === null || uid === undefined) return;
+    setText(dom.promptPreviewNote, '加载中…');
+    dom.promptPreview.textContent = '';
+    // 传编辑框里的文本：改完还没保存也能看到效果，不用先存一次
+    apiCall('preview_prompt', uid, dom.promptSplitText.value.trim(), dom.promptMemeText.value.trim())
+      .then(function (res) {
+        if (!res || res.ok === false) {
+          setText(dom.promptPreviewNote, (res && res.error) || '预览失败');
+          return;
+        }
+        dom.promptPreview.textContent = String(res.text || '');
+        setText(dom.promptPreviewNote, String(res.note || ''));
+      }, function (err) {
+        setText(dom.promptPreviewNote, '预览失败：' + errText(err));
+      });
+  }
+
+  function savePromptModal() {
+    var uid = S.promptUid;
+    if (uid === null || uid === undefined) return;
+    var payload = {
+      split_prompt: dom.promptSplitText.value.trim(),
+      meme_prompt: dom.promptMemeText.value.trim()
+    };
+    var btn = dom.btnPromptSave;
+    setBusy(btn, true, '保存中…');
+    apiCall('update_persona', uid, payload).then(function (res) {
+      setBusy(btn, false);
+      if (res && res.ok === false) {
+        var r = renderFieldErrors(PERSONA_FIELDS, res.errors);
+        var msgs = r.unknown.slice();
+        if (!r.shown && !msgs.length && hasText(res.error)) msgs.push(String(res.error));
+        toast(msgs.length ? msgs[0] : '保存失败，请检查标红字段', 'err');
+        return;
+      }
+      clearFieldErrors(PERSONA_FIELDS);
+      setText(dom.promptModalHint, '已保存');
+      toast('提示词已保存', 'ok');
+      loadPersonas(uid).then(function () {
+        var p = currentPersona();
+        if (p) {
+          dom.promptSplitText.value = p.split_prompt || '';
+          dom.promptMemeText.value = p.meme_prompt || '';
+        }
+        if (S.promptTab === 'preview') loadPromptPreview();
+      });
+    }, function (err) {
+      setBusy(btn, false);
+      toast('保存失败：' + errText(err), 'err');
+    });
+  }
+
+  function resetPromptModal() {
+    dom.promptSplitText.value = '';
+    dom.promptMemeText.value = '';
+    setText(dom.promptModalHint, '已清空，点「保存」后生效（恢复为内置提示词）');
   }
 
   function savePersona() {
@@ -1726,7 +1859,11 @@
       temperature_override: inputNum(dom.pTempOverride),
       max_tokens_override: inputNum(dom.pTokensOverride),
       split_enabled: !!dom.pSplitEnabled.checked,
-      meme_enabled: !!dom.pMemeEnabled.checked
+      meme_enabled: !!dom.pMemeEnabled.checked,
+      // 留空 = 跟随全局设置（后端存 NULL，不是 0）
+      split_chance: ratioFromPercent(dom.pSplitChance, null),
+      split_delay_ms: inputNum(dom.pSplitDelay),
+      meme_chance: ratioFromPercent(dom.pMemeChance, null)
     };
     var btn = dom.btnPersonaSave;
     setBusy(btn, true, '保存中…');
@@ -4624,6 +4761,24 @@
     dom.btnPersonaNew.addEventListener('click', createPersona);
     dom.btnPersonaSave.addEventListener('click', savePersona);
     if (dom.btnMemeDirBrowse) dom.btnMemeDirBrowse.addEventListener('click', browseMemeDir);
+
+    /* ----- 提示词编辑弹窗 ----- */
+    if (dom.btnPersonaPromptEdit) dom.btnPersonaPromptEdit.addEventListener('click', openPromptModal);
+    if (dom.promptModalClose) dom.promptModalClose.addEventListener('click', closePromptModal);
+    if (dom.btnPromptSave) dom.btnPromptSave.addEventListener('click', savePromptModal);
+    if (dom.btnPromptReset) dom.btnPromptReset.addEventListener('click', resetPromptModal);
+    if (dom.promptTabs) {
+      dom.promptTabs.addEventListener('click', function (ev) {
+        var btn = ev.target.closest ? ev.target.closest('.tab') : null;
+        if (btn && btn.getAttribute('data-prompt-tab')) switchPromptTab(btn.getAttribute('data-prompt-tab'));
+      });
+    }
+    if (dom.promptModal) {
+      // 点遮罩关掉（点弹窗内部不关）
+      dom.promptModal.addEventListener('click', function (ev) {
+        if (ev.target === dom.promptModal) closePromptModal();
+      });
+    }
     dom.btnPersonaDelete.addEventListener('click', deletePersona);
     dom.btnPersonaResetMemory.addEventListener('click', resetPersonaMemory);
     dom.pPrompt.addEventListener('input', updatePromptCount);

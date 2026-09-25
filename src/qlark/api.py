@@ -78,6 +78,13 @@ class JsApi:
         """扫描目录，返回识别到的情绪清单（用于"配好了没"的即时反馈）。"""
         return self._app.scan_meme_dir(str(path or ""))
 
+    def preview_prompt(self, uid: int, split_prompt: str = "", meme_prompt: str = "") -> dict[str, Any]:
+        """拼出"即将发给 AI 的全部内容"，供人设界面的总体预览用。
+
+        传入编辑框里的文本就按它拼，改完没保存也能看到效果。
+        """
+        return self._app.preview_prompt(int(uid), str(split_prompt or ""), str(meme_prompt or ""))
+
     # ------------------------------------------------------------------ 账号
     def list_accounts(self) -> dict[str, Any]:
         return self._app.list_accounts()

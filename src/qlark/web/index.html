@@ -601,23 +601,51 @@
                 </label>
 
                 <div class="field">
-                  <span class="field-label">随机分段回复</span>
+                  <span class="field-label">多段连发</span>
                   <label class="switch">
                     <input type="checkbox" id="pSplitEnabled">
                     <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text" id="pSplitSwitchText">允许偶尔连发多条</span>
+                    <span class="switch-text">允许多段连发</span>
                   </label>
-                  <span class="field-hint">勾选后**才有机会**连发；实际频率由「模型配置 → 对话行为」里的分段概率决定，条数上限也在那里设。没掷中的轮次，这条规则根本不会发给模型</span>
+                  <span class="field-hint">勾选后才有机会把一句话拆成多条发送；实际频率由下面的「多段连发概率」决定。**没掷中的轮次，规则根本不会发给模型**</span>
                 </div>
 
                 <div class="field">
-                  <span class="field-label">表情包回复</span>
+                  <span class="field-label">表情包</span>
                   <label class="switch">
                     <input type="checkbox" id="pMemeEnabled">
                     <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text">允许偶尔配一张表情</span>
+                    <span class="switch-text">允许发送表情包</span>
                   </label>
-                  <span class="field-hint">和分段是**各自独立**的开关与概率，可以只配表情不连发。表情图取自「对话行为」里配置的目录</span>
+                  <span class="field-hint">和「多段连发」**各自独立**，所以「只发一条但配个表情」这种自然行为也会出现。表情图取自「模型配置 → 对话行为」里配置的目录</span>
+                </div>
+
+                <div class="row-2">
+                  <label class="field">
+                    <span class="field-label">多段连发间隔（毫秒）</span>
+                    <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
+                    <span class="field-hint">留空 = 跟随全局</span>
+                    <span class="field-err" id="ePSplitDelay" hidden></span>
+                  </label>
+                  <label class="field">
+                    <span class="field-label">多段连发概率（%）</span>
+                    <input class="input" id="pSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
+                    <span class="field-hint">留空 = 跟随全局</span>
+                    <span class="field-err" id="ePSplitChance" hidden></span>
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span class="field-label">发送图片概率（%）</span>
+                  <input class="input" id="pMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
+                  <span class="field-hint">留空 = 跟随全局。与多段连发彼此独立</span>
+                  <span class="field-err" id="ePMemeChance" hidden></span>
+                </label>
+
+                <div class="field">
+                  <span class="field-label">提示词编辑</span>
+                  <button class="btn" id="btnPersonaPromptEdit" type="button">编辑多段对话 / 发送表情提示词</button>
+                  <span class="field-hint">这两套提示词可以自己改写；也可以点开「总体预览」看看即将发给 AI 的全部内容</span>
                 </div>
               </div>
 
@@ -914,6 +942,57 @@
       </button>
       <span class="spacer"></span>
       <button class="btn ghost" id="btnClose" type="button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 提示词编辑（人设） ===== -->
+<div class="modal-backdrop" id="promptModal" hidden>
+  <div class="modal prompt-modal" role="dialog" aria-modal="true" aria-labelledby="promptModalTitle">
+    <div class="modal-head">
+      <h2 class="modal-title" id="promptModalTitle">
+        <svg class="icon"><use href="#i-model" xlink:href="#i-model"></use></svg>提示词编辑
+      </h2>
+      <span class="tag" id="promptModalWho">—</span>
+      <button class="icon-btn sm" id="promptModalClose" type="button" title="关闭" aria-label="关闭">
+        <svg class="icon sm"><use href="#i-close" xlink:href="#i-close"></use></svg>
+      </button>
+    </div>
+
+    <div class="tabs" id="promptTabs" role="tablist">
+      <button class="tab active" type="button" role="tab" data-prompt-tab="split">多段对话</button>
+      <button class="tab" type="button" role="tab" data-prompt-tab="meme">发送表情</button>
+      <button class="tab" type="button" role="tab" data-prompt-tab="preview">总体预览</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="prompt-pane" data-prompt-pane="split">
+        <span class="field-hint">这一整段会在**掷中多段连发**时注入 system 提示词。留空 = 用内置的那套。</span>
+        <textarea class="textarea mono" id="promptSplitText" rows="10" spellcheck="false"
+                  placeholder="留空 = 使用内置提示词"></textarea>
+        <span class="field-hint">可用占位符：<code class="mono">{max_messages}</code> 条数上限、<code class="mono">{chars}</code> 单条字数建议</span>
+        <span class="field-err" id="ePromptSplit" hidden></span>
+      </div>
+
+      <div class="prompt-pane" data-prompt-pane="meme" hidden>
+        <span class="field-hint">这一整段会在**掷中发送表情**时注入 system 提示词。留空 = 用内置的那套。</span>
+        <textarea class="textarea mono" id="promptMemeText" rows="10" spellcheck="false"
+                  placeholder="留空 = 使用内置提示词"></textarea>
+        <span class="field-hint">可用占位符：<code class="mono">{emotions}</code> 自动填当前表情目录里识别到的情绪</span>
+        <span class="field-err" id="ePromptMeme" hidden></span>
+      </div>
+
+      <div class="prompt-pane" data-prompt-pane="preview" hidden>
+        <span class="field-hint" id="promptPreviewNote">加载中…</span>
+        <pre class="prompt-preview" id="promptPreview"></pre>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn primary" id="btnPromptSave" type="button">保存</button>
+      <button class="btn" id="btnPromptReset" type="button">恢复内置</button>
+      <span class="spacer"></span>
+      <span class="foot-hint" id="promptModalHint"></span>
     </div>
   </div>
 </div>

@@ -32,6 +32,13 @@ COLUMN_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "personas": [
         ("split_enabled", "INTEGER DEFAULT 0"),
         ("meme_enabled", "INTEGER DEFAULT 0"),
+        # 下面这几个留空（NULL）表示"跟随全局设置"，见 settings.DEFAULTS
+        ("split_chance", "REAL DEFAULT NULL"),
+        ("split_delay_ms", "INTEGER DEFAULT NULL"),
+        ("meme_chance", "REAL DEFAULT NULL"),
+        # 自定义提示词；留空表示用内置的那套
+        ("split_prompt", "TEXT DEFAULT NULL"),
+        ("meme_prompt", "TEXT DEFAULT NULL"),
     ],
 }
 

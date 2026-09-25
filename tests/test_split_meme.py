@@ -17,6 +17,7 @@ from conftest import FakeOpenAI, _get, wait_for
 from qlark.chat.memes import MemeLibrary
 from qlark.chat.reply_format import (
     build_output_rules,
+    build_preview,
     compose_memory_text,
     parse_reply,
     salvage,
@@ -556,3 +557,147 @@ def test_rules_absent_from_prompt_when_both_off(ready, fake_openai: FakeOpenAI) 
     payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
     assert "【输出规则】" not in payload
     assert "meme" not in payload
+
+
+# --------------------------------------------------------------------------- #
+# 人设级数值：留空跟随全局，填了就覆盖
+# --------------------------------------------------------------------------- #
+def test_persona_chance_overrides_global(ready, fake_openai: FakeOpenAI) -> None:
+    """全局分段概率 0，但人设上设了 100% —— 人设优先。"""
+    ready.settings.update(split_chance=0.0, meme_chance=0.0, split_delay_ms=0)
+    _enable(ready, split_enabled=True, split_chance=1.0)
+    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
+
+    _say(ready)
+    assert len(_sent_segments(ready.home)) == 2, "人设上的概率没生效"
+
+
+def test_blank_persona_chance_follows_global(ready, fake_openai: FakeOpenAI) -> None:
+    """留空必须跟随全局，**不能**被当成 0（0 是"永不触发"）。"""
+    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
+    _enable(ready, split_enabled=True, split_chance=None)
+    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
+
+    _say(ready)
+    assert len(_sent_segments(ready.home)) == 2, "留空没有跟随全局"
+
+
+def test_persona_zero_chance_means_never(ready, fake_openai: FakeOpenAI) -> None:
+    """填 0 和留空是两回事：填 0 就是永不触发。"""
+    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
+    _enable(ready, split_enabled=True, split_chance=0.0)
+    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
+
+    _say(ready)
+    assert len(_sent_segments(ready.home)) == 1, "填 0 却触发了"
+
+
+def test_persona_delay_is_used(ready, fake_openai: FakeOpenAI) -> None:
+    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
+    _enable(ready, split_enabled=True, split_delay_ms=400)
+    fake_openai.replies('{"messages": ["第一句", "第二句"]}', repeat_last=True)
+
+    _say(ready, expect=2)
+
+    stamps = [item["at"] for item in _sent(ready.home)]
+    gap = stamps[1] - stamps[0]
+    assert gap >= 0.25, f"人设上的间隔没生效（只隔了 {gap:.3f}s）"
+
+
+def test_persona_store_round_trips_new_fields(ready) -> None:
+    """存进去再读回来必须一致，NULL 不能变成 0。"""
+    store = ready.bot.pipeline.personas
+    assert store.update(1, {
+        "split_chance": 0.4, "split_delay_ms": 800, "meme_chance": 0.3,
+        "split_prompt": "自定义分段", "meme_prompt": "自定义表情",
+    })["ok"]
+    p = store.get(1)
+    assert p["split_chance"] == pytest.approx(0.4)
+    assert p["split_delay_ms"] == 800
+    assert p["meme_chance"] == pytest.approx(0.3)
+    assert p["split_prompt"] == "自定义分段"
+    assert p["meme_prompt"] == "自定义表情"
+
+    store.update(1, {"split_chance": None, "split_prompt": ""})
+    p = store.get(1)
+    assert p["split_chance"] is None, "留空应当存成 NULL，而不是 0（0 = 永不触发）"
+    # get() 返回的是原始行（NULL 就是 None）；界面读的是 list_public()，
+    # 那一层会把 None 归一化成空串
+    assert p["split_prompt"] is None
+    public = next(item for item in store.list_public() if item["uid"] == 1)
+    assert public["split_prompt"] == ""
+    assert public["split_chance"] is None
+
+
+def test_persona_store_validates_ranges(ready) -> None:
+    errors = ready.bot.pipeline.personas.validate({"split_chance": 5, "split_delay_ms": -1})
+    assert "split_chance" in errors and "split_delay_ms" in errors
+
+
+# --------------------------------------------------------------------------- #
+# 自定义提示词
+# --------------------------------------------------------------------------- #
+def test_custom_split_prompt_replaces_builtin() -> None:
+    rules = build_output_rules(
+        split=True, max_messages=3, meme=False, emotions=[],
+        split_prompt="给我拆成 {max_messages} 段，每段不超过 {chars} 字",
+    )
+    assert "给我拆成 3 段，每段不超过 40 字" in rules
+    assert "像真人打字时" not in rules, "内置文案没被替换掉"
+
+
+def test_custom_meme_prompt_gets_emotion_list() -> None:
+    rules = build_output_rules(
+        split=False, max_messages=2, meme=True, emotions=["嫌弃", "害羞"],
+        meme_prompt="从 {emotions} 里挑一个最贴的",
+    )
+    assert "从 嫌弃、害羞 里挑一个最贴的" in rules
+
+
+def test_custom_prompt_with_stray_braces_does_not_crash() -> None:
+    """用户可能在提示词里写示例 JSON，花括号不该把整轮回复搞崩。"""
+    rules = build_output_rules(
+        split=True, max_messages=2, meme=False, emotions=[],
+        split_prompt='照这个格式：{"messages": ["a", "b"]}',
+    )
+    assert '{"messages": ["a", "b"]}' in rules
+
+
+def test_persona_custom_prompt_reaches_the_model(ready, fake_openai: FakeOpenAI) -> None:
+    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
+    _enable(ready, split_enabled=True, split_prompt="这是我自己写的分段规则喵")
+    fake_openai.replies('{"messages": ["一"]}', repeat_last=True)
+
+    _say(ready)
+
+    payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
+    assert "这是我自己写的分段规则喵" in payload
+
+
+def test_preview_prompt_shows_everything() -> None:
+    """总体预览要把人设提示词、【输出规则】、摘要占位、示例用户消息都列出来。"""
+    res = build_preview(
+        system_prompt="你是米蛋，一只傲娇的猫娘。",
+        rules=build_output_rules(
+            split=True, max_messages=2, meme=True, emotions=["嫌弃"],
+            split_prompt="自定义分段规则",
+        ),
+        enabled_note="多段连发概率 25%、发送图片概率 20%",
+    )
+
+    titles = [b["title"] for b in res["blocks"]]
+    assert any("人设提示词" in t for t in titles)
+    assert any("输出规则" in t for t in titles)
+    assert any("长期记忆摘要" in t for t in titles)
+    assert any("用户消息" in t for t in titles)
+    assert "自定义分段规则" in res["text"]
+    assert "你是米蛋" in res["text"]
+    assert "昵称：" in res["text"], "示例用户消息应当体现三行块格式"
+    assert "多段连发概率" in res["note"]
+
+
+def test_preview_prompt_handles_missing_system_prompt() -> None:
+    res = build_preview(system_prompt="", rules="", enabled_note="")
+    assert "还没写提示词" in res["text"]
+    # 规则为空时那一块不该出现（两个功能都关的情况）
+    assert not any("输出规则" in b["title"] for b in res["blocks"])

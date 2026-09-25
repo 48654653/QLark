@@ -1149,6 +1149,75 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
 .row-inline .input { flex: 1 1 auto; min-width: 0; }
 .row-inline .btn { flex: 0 0 auto; white-space: nowrap; }
 
+/* 两个字段并排（窄屏自动堆叠） */
+.row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 640px) {
+  .row-2 { grid-template-columns: 1fr; }
+}
+
+/* ----- 提示词编辑弹窗 ----- */
+.prompt-modal { width: min(860px, 94vw); }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+.tab {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tab:hover { background: var(--surface-2); color: var(--text); }
+.tab.active {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.prompt-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prompt-pane[hidden] { display: none; }
+.prompt-pane .textarea { min-height: 220px; }
+.prompt-pane code.mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.prompt-preview {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 46vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
 .field-err {
   font-size: 11.5px;
   line-height: 1.6;

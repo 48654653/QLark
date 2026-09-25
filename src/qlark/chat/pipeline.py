@@ -86,6 +86,8 @@ class ReplyPlan:
     completion_tokens: int = 0
     #: 走到"抢救"或"兜底"时的原因，仅用于日志
     degraded: str | None = None
+    #: 多条之间的间隔（毫秒）；人设级设置优先，留空则用全局
+    delay_ms: int = 0
 
     @property
     def memory_text(self) -> str:
@@ -454,12 +456,14 @@ class MessagePipeline:
         # 随机分段 / 表情包：**骰子必须在组装提示词之前掷**。
         # 没掷中的那一项，它的规则块根本不进提示词 —— 模型不知道有这个能力，
         # 自然就不会用。这比在提示词里写"请你不要每次都这样"可靠一百倍。
-        allow_split, allow_meme, emotions = self._roll_expression(persona)
+        allow_split, allow_meme, emotions, delay_ms = self._roll_expression(persona)
         rules = build_output_rules(
             split=allow_split,
             max_messages=self.settings.split_max_messages,
             meme=allow_meme,
             emotions=emotions,
+            split_prompt=str(persona.get("split_prompt") or ""),
+            meme_prompt=str(persona.get("meme_prompt") or ""),
         )
         if rules:
             extra_system.append(rules)
@@ -484,6 +488,7 @@ class MessagePipeline:
             allow_split=allow_split,
             allow_meme=allow_meme,
             emotions=emotions,
+            delay_ms=delay_ms,
         )
         elapsed = time.monotonic() - started
 
@@ -498,7 +503,7 @@ class MessagePipeline:
             event,
             plan.texts,
             image=plan.image_path,
-            delay_ms=self.settings.split_delay_ms if len(plan.texts) > 1 else 0,
+            delay_ms=plan.delay_ms if len(plan.texts) > 1 else 0,
         )
         if sent == 0:
             self._log("模型返回空回复，未发送", level="warn")
@@ -563,16 +568,32 @@ class MessagePipeline:
         """表情库。设置里没配目录就用 ``<程序目录>/memes``。"""
         return MemeLibrary(resolve_meme_dir(self.settings.meme_dir, paths.app_dir() / "memes"))
 
-    def _roll_expression(self, persona: dict[str, Any]) -> tuple[bool, bool, list[str]]:
+    def _effective(self, persona: dict[str, Any] | None, key: str, fallback: Any) -> Any:
+        """读人设级数值；**留空（NULL / 空串）就跟随全局设置**。
+
+        注意不能把"留空"和"0"混为一谈：概率填 0 是"永不触发"，
+        留空是"用全局的"。所以空值存进库时是 NULL 而不是 0。
+        """
+        value = (persona or {}).get(key)
+        if value is None or value == "":
+            return fallback
+        return value
+
+    def _roll_expression(
+        self, persona: dict[str, Any] | None
+    ) -> tuple[bool, bool, list[str], int]:
         """掷骰子决定这一轮允不允许分段 / 配表情。
 
         **随机的关键在这里，不在提示词里。** 只要把规则发给模型，它几乎每次都会
         用；没掷中时规则根本不进提示词，模型不知道有这个能力，自然就不用。
 
         分段和表情**各自独立掷**：这样才能出现"只发一条但配个表情"这种自然行为。
+
+        Returns:
+            ``(允许分段, 允许表情, 可用情绪, 多段连发间隔毫秒)``
         """
-        split_on = bool(persona.get("split_enabled"))
-        meme_on = bool(persona.get("meme_enabled"))
+        split_on = bool(persona.get("split_enabled")) if persona else False
+        meme_on = bool(persona.get("meme_enabled")) if persona else False
 
         emotions: list[str] = []
         if meme_on:
@@ -585,13 +606,17 @@ class MessagePipeline:
                 )
                 meme_on = False
 
-        allow_split = split_on and random.random() < self.settings.split_chance
-        allow_meme = meme_on and random.random() < self.settings.meme_chance
+        split_chance = float(self._effective(persona, "split_chance", self.settings.split_chance))
+        meme_chance = float(self._effective(persona, "meme_chance", self.settings.meme_chance))
+        delay_ms = int(self._effective(persona, "split_delay_ms", self.settings.split_delay_ms))
+
+        allow_split = split_on and random.random() < split_chance
+        allow_meme = meme_on and random.random() < meme_chance
         if allow_split:
             self._log("本轮允许分段回复", level="debug")
         if allow_meme:
             self._log("本轮允许配表情", level="debug")
-        return allow_split, allow_meme, emotions
+        return allow_split, allow_meme, emotions, delay_ms
 
     def _plan_reply(
         self,
@@ -603,6 +628,7 @@ class MessagePipeline:
         allow_split: bool,
         allow_meme: bool,
         emotions: list[str],
+        delay_ms: int = 0,
     ) -> ReplyPlan:
         """调用模型 → 解析 → 重新生成 → 抢救 → 兜底，产出一份"要发什么"的计划。"""
         spec = {
@@ -620,6 +646,7 @@ class MessagePipeline:
             calls=1,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
+            delay_ms=delay_ms,
         )
         if parsed.ok:
             plan.texts = parsed.messages

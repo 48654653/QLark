@@ -114,6 +114,13 @@ class PersonaStore:
                     # 随机分段 / 表情包：人设级开关（"这个角色会不会这么做"）
                     "split_enabled": bool(row.get("split_enabled")),
                     "meme_enabled": bool(row.get("meme_enabled")),
+                    # 数值留空 = 跟随全局设置（settings.DEFAULTS）
+                    "split_chance": row.get("split_chance"),
+                    "split_delay_ms": row.get("split_delay_ms"),
+                    "meme_chance": row.get("meme_chance"),
+                    # 自定义提示词；空串 = 用内置的
+                    "split_prompt": str(row.get("split_prompt") or ""),
+                    "meme_prompt": str(row.get("meme_prompt") or ""),
                     "can_delete": uid != DEFAULT_PERSONA_UID,
                     "message_count": counts.get(uid, 0),
                 }
@@ -164,6 +171,35 @@ class PersonaStore:
                 if not 1 <= value <= 32000:
                     errors["max_tokens_override"] = "最大 Token 必须在 1~32000 之间"
 
+        for key, label, low, high in (
+            ("split_chance", "多段连发概率", 0.0, 1.0),
+            ("meme_chance", "发送图片概率", 0.0, 1.0),
+        ):
+            raw = fields.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                errors[key] = f"{label}必须是数字"
+            else:
+                if not low <= value <= high:
+                    errors[key] = f"{label}必须在 0~100% 之间"
+
+        delay = fields.get("split_delay_ms")
+        if delay not in (None, ""):
+            try:
+                value = int(delay)
+            except (TypeError, ValueError):
+                errors["split_delay_ms"] = "多段连发间隔必须是整数"
+            else:
+                if not 0 <= value <= 5000:
+                    errors["split_delay_ms"] = "多段连发间隔必须在 0~5000 毫秒之间"
+
+        for key, label in (("split_prompt", "多段对话提示词"), ("meme_prompt", "发送表情提示词")):
+            if key in fields and len(str(fields[key] or "")) > MAX_PROMPT:
+                errors[key] = f"{label}最长 {MAX_PROMPT} 个字符"
+
         return errors
 
     # ------------------------------------------------------------------ 写入
@@ -204,6 +240,26 @@ class PersonaStore:
             updates["split_enabled"] = 1 if fields["split_enabled"] else 0
         if "meme_enabled" in fields:
             updates["meme_enabled"] = 1 if fields["meme_enabled"] else 0
+        # 留空 = 跟随全局：存 NULL，而不是 0（0 会被当成"概率为 0，永不触发"）
+        for key, cast, low, high in (
+            ("split_chance", float, 0.0, 1.0),
+            ("meme_chance", float, 0.0, 1.0),
+            ("split_delay_ms", int, 0, 5000),
+        ):
+            if key not in fields:
+                continue
+            value = fields[key]
+            if value in (None, "", "null"):
+                updates[key] = None
+            else:
+                try:
+                    number = cast(value)
+                except (TypeError, ValueError):
+                    continue
+                updates[key] = max(low, min(high, number))
+        for key in ("split_prompt", "meme_prompt"):
+            if key in fields:
+                updates[key] = str(fields[key] or "").strip() or None
         if "avatar_path" in fields:
             updates["avatar_path"] = str(fields["avatar_path"] or "")
 

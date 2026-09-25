@@ -165,14 +165,18 @@ def test_status_command(live) -> None:
 
 def test_reset_command_clears_memory(live) -> None:
     live.personas.add_whitelist(USER)
+    key = memory_key(f"group:{GROUP}", 1)
+    store = live.bot.pipeline.store
+
     _inject(live.home, user_id=USER, text="记住这句话")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", 1)) == 2
+    # 先发送、后落库（见 pipeline），查库必须等
+    assert wait_for(lambda: store.message_count(key) == 2, timeout=10), "记忆没落库"
 
     _reset(live.home)
     _inject(live.home, user_id=USER, text="/reset")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", 1)) == 0
+    assert wait_for(lambda: store.message_count(key) == 0, timeout=10), "/reset 没清掉记忆"
 
 
 # --------------------------------------------------------------------------- #
@@ -203,10 +207,15 @@ def test_persona_memory_is_isolated(live) -> None:
     """人设之间的记忆不互通（需求规格 §6.1）。"""
     _add_persona(live, "傲娇女仆")
     live.personas.add_whitelist(USER)
+    store = live.bot.pipeline.store
 
     _inject(live.home, user_id=USER, text="人设一的事")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", 1)) == 2
+    # 产品是"先发送、后落库"（故意如此，保证记忆里不会出现有问无答的空洞），
+    # 所以收到回复 ≠ 已经写进数据库了。查库必须等，否则满负载时必然偶发失败。
+    assert wait_for(
+        lambda: store.message_count(memory_key(f"group:{GROUP}", 1)) == 2, timeout=10
+    ), "人设1的记忆没落库"
 
     _reset(live.home)
     _inject(live.home, user_id=USER, text="/person 2")
@@ -216,8 +225,11 @@ def test_persona_memory_is_isolated(live) -> None:
     _inject(live.home, user_id=USER, text="人设二的事")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
 
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", 2)) == 2
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", 1)) == 2
+    assert wait_for(
+        lambda: store.message_count(memory_key(f"group:{GROUP}", 2)) == 2, timeout=10
+    ), "人设2的记忆没落库"
+    # 人设1 的记忆不该被这次对话影响
+    assert store.message_count(memory_key(f"group:{GROUP}", 1)) == 2, "人设之间的记忆串了"
 
 
 def test_persona_override_changes_model_request(live, fake_openai: FakeOpenAI) -> None:
@@ -263,7 +275,10 @@ def test_deleting_persona_falls_back_and_wipes_memory(live) -> None:
     _reset(live.home)
     _inject(live.home, user_id=USER, text="临时人设的记忆")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
-    assert live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", uid)) == 2
+    assert wait_for(
+        lambda: live.bot.pipeline.store.message_count(memory_key(f"group:{GROUP}", uid)) == 2,
+        timeout=10,
+    ), "记忆没落库"
 
     result = live.personas.delete(uid)
     assert result.deleted_messages == 2
