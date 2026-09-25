@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import struct
@@ -48,6 +49,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -238,36 +240,49 @@ def event_endpoint(qq: str) -> tuple[str, str] | None:
 def push_event(payload: dict) -> bool:
     """把一条事件 POST 给 QLark 的事件服务。
 
-    **鉴权方式必须和真身一致**：真 NapCat 的 httpClient 不发 ``Authorization``，
-    而是发 ``x-signature: sha1=<hex(sha1(token + 原始请求体))>``。
-    替身以前用的是 Bearer，于是"事件被 401 全拒"这个真实故障在测试里永远复现不了。
+    **必须逐项照抄真身的做法**，这个函数已经因为"替身比真身好说话"漏掉过两次真实故障：
+
+    1. 鉴权用 ``x-signature``（sha1(token + 请求体)），**不发 Authorization**；
+    2. **不设 Content-Length，改用 chunked 传输** —— 真 NapCat 的 httpClient 只设了
+       Content-Type / x-self-id / x-signature，Node 就自动切成 chunked 了。
+       用 urllib 的 ``data=`` 会自动补上 Content-Length，那会让
+       "服务端只会读 Content-Length、读不出 chunked 请求体"这类问题在测试里消失。
     """
     endpoint = event_endpoint(QQ)
     if endpoint is None:
         STATE.record_push(payload, "未配置 httpClients，事件无法推送")
         return False
     url, token = endpoint
+
+    parsed = urllib.parse.urlsplit(url)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST")
-    request.add_header("Content-Type", "application/json")
-    request.add_header("x-self-id", str(QQ))
-    if token:
-        digest = hashlib.sha1(token.encode("utf-8") + body).hexdigest()
-        request.add_header("x-signature", f"sha1={digest}")
-    # 绕开系统代理：Windows 的 ProxyOverride 白名单在 Python 里不生效，
-    # 不显式禁用的话连 127.0.0.1 的请求都会被丢给代理
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+
+    conn = http.client.HTTPConnection(parsed.hostname or "127.0.0.1", parsed.port or 80, timeout=5)
     try:
-        with opener.open(request, timeout=5) as response:
-            ok = 200 <= response.status < 300
-        STATE.record_push(payload, None if ok else f"HTTP {response.status}")
+        conn.putrequest("POST", path, skip_host=False, skip_accept_encoding=True)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("x-self-id", str(QQ))
+        if token:
+            digest = hashlib.sha1(token.encode("utf-8") + body).hexdigest()
+            conn.putheader("x-signature", f"sha1={digest}")
+        conn.putheader("Transfer-Encoding", "chunked")
+        conn.endheaders()
+        # 一个 chunk + 结束块；这就是 Node 在没设 Content-Length 时发的形态
+        conn.send(f"{len(body):X}\r\n".encode("ascii") + body + b"\r\n0\r\n\r\n")
+        response = conn.getresponse()
+        status = response.status
+        response.read()
+        ok = 200 <= status < 300
+        STATE.record_push(payload, None if ok else f"HTTP {status}")
         return ok
-    except urllib.error.HTTPError as exc:
-        STATE.record_push(payload, f"HTTP {exc.code}")
-        return False
     except Exception as exc:
         STATE.record_push(payload, str(exc))
         return False
+    finally:
+        conn.close()
 
 
 # --------------------------------------------------------------------------- #

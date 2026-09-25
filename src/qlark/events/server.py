@@ -204,25 +204,72 @@ def _build_handler(owner: EventServer) -> type[BaseHTTPRequestHandler]:
                 except Exception:
                     pass
 
-        def _handle_post(self) -> None:
+        def _read_chunked(self) -> bytes:
+            """读一个 ``Transfer-Encoding: chunked`` 的请求体。
+
+            **真 NapCat 走的就是这条路**：它的 httpClient 只设了
+            ``Content-Type`` / ``x-self-id`` / ``x-signature``，**没有 Content-Length**，
+            于是 Node 自动改用 chunked 传输。只认 Content-Length 的实现会读到空体，
+            验签必然失败（表现为每条事件都回 401），而且没读走的字节还会污染
+            keep-alive 连接上的下一个请求。
+            """
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                line = self.rfile.readline(1024)
+                if not line:
+                    break
+                size_text = line.strip().split(b";", 1)[0]  # 忽略 chunk 扩展
+                try:
+                    size = int(size_text, 16)
+                except ValueError:
+                    # 不是合法的 chunk 头；连接已经不可信，直接断开
+                    self.close_connection = True
+                    break
+                if size == 0:
+                    # 读掉 trailer（正常就是一行空行）
+                    while True:
+                        trailer = self.rfile.readline(1024)
+                        if trailer in (b"\r\n", b"\n", b""):
+                            break
+                    break
+                total += size
+                if total > MAX_BODY_BYTES:
+                    self.close_connection = True
+                    raise ValueError("chunked body too large")
+                chunks.append(self.rfile.read(size))
+                self.rfile.read(2)  # chunk 结尾的 CRLF
+            return b"".join(chunks)
+
+        def _read_body(self) -> tuple[bytes, bool]:
+            """读请求体，返回 ``(原始字节, 是否超限)``。
+
+            **无论后面走哪个分支都必须读干净** —— 否则在 keep-alive 连接上，
+            没读走的请求体会残留在缓冲区里被当成下一个请求行。NapCat 用同一条
+            连接连续推事件，实测结果是它的 Node 解析器彻底错乱，报
+            `Parse Error: Expected HTTP/`。
+            """
+            encoding = (self.headers.get("Transfer-Encoding") or "").lower()
+            if "chunked" in encoding:
+                try:
+                    return self._read_chunked(), False
+                except ValueError:
+                    return b"", True
+
             try:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = 0
-            too_big = length > MAX_BODY_BYTES
-
-            # **必须先把请求体读干净，再进入任何分支。**
-            #
-            # 否则在 keep-alive 连接上，没读走的请求体会残留在缓冲区里，被当成
-            # 下一个请求的请求行。NapCat 用同一条连接连续推事件，实测结果是它的
-            # Node 解析器彻底错乱，报 `Parse Error: Expected HTTP/`。
-            # 之前"鉴权失败就早退"正好踩中这条：所有事件都被 401 且都没读体。
-            raw = b""
-            if too_big:
+            if length > MAX_BODY_BYTES:
                 # 太大就不读了，但必须断开这条连接，避免残留字节污染后续请求
                 self.close_connection = True
-            elif length > 0:
-                raw = self.rfile.read(length)
+                return b"", True
+            if length <= 0:
+                return b"", False
+            return self.rfile.read(length), False
+
+        def _handle_post(self) -> None:
+            raw, too_big = self._read_body()
 
             signature = self.headers.get("X-Signature")
             if not owner.authorized(self.headers.get("Authorization"), signature, raw):
@@ -230,9 +277,9 @@ def _build_handler(owner: EventServer) -> type[BaseHTTPRequestHandler]:
                 self._send_json(401, {"ok": False, "error": "unauthorized"})
                 return
 
-            if too_big or length <= 0:
+            if too_big or not raw:
                 owner.invalid += 1
-                self._send_json(400, {"ok": False, "error": "bad content-length"})
+                self._send_json(400, {"ok": False, "error": "empty or oversized body"})
                 return
 
             try:

@@ -194,6 +194,117 @@ def test_success_response_is_json_not_204(server: EventServer) -> None:
     assert json.loads(body) == {}, "空对象表示'没有快速操作'"
 
 
+# --------------------------------------------------------------------------- #
+# chunked 传输：真 NapCat 走的正是这条
+# --------------------------------------------------------------------------- #
+def post_chunked(conn: http.client.HTTPConnection, body: bytes, headers: dict | None = None):
+    """完全不设 Content-Length，改用 chunked —— 与真 NapCat 的 httpClient 一致。
+
+    真身只设 Content-Type / x-self-id / x-signature，Node 就自动切成 chunked 了。
+    只认 Content-Length 的服务端会读到空体：验签失败（每条事件 401），
+    而且没读走的字节会污染 keep-alive 连接上的下一个请求。
+    """
+    conn.putrequest("POST", "/", skip_accept_encoding=True)
+    conn.putheader("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        conn.putheader(key, value)
+    conn.putheader("Transfer-Encoding", "chunked")
+    conn.endheaders()
+    conn.send(f"{len(body):X}\r\n".encode("ascii") + body + b"\r\n0\r\n\r\n")
+    response = conn.getresponse()
+    payload = response.read()
+    return response.status, payload
+
+
+def test_accepts_chunked_body_with_signature(server: EventServer, events: list[dict]) -> None:
+    """真 NapCat 不设 Content-Length，走 chunked —— 这条必须过。
+
+    踩过的坑：服务端只读 Content-Length，于是把 chunked 请求体读成空，
+    验签对不上 → 每条事件都回 401，机器人一个字都不回。
+    """
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        payload = {"post_type": "message", "marker": "chunked", "filler": "x" * 3000}
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        status, _body = post_chunked(
+            conn, raw, {"x-self-id": "2157649443", "x-signature": sign(TOKEN, raw)}
+        )
+    finally:
+        conn.close()
+
+    assert status == 200, f"chunked 请求体没被读出来（HTTP {status}）"
+    assert [e.get("marker") for e in events] == ["chunked"]
+
+
+def test_chunked_body_keeps_connection_usable(server: EventServer, events: list[dict]) -> None:
+    """chunked 也必须读干净，否则下一个请求会被残留字节搞坏。"""
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        for index in range(3):
+            raw = json.dumps({"marker": index, "filler": "y" * 2000}).encode("utf-8")
+            status, _body = post_chunked(conn, raw, {"x-signature": sign(TOKEN, raw)})
+            assert status == 200, f"第 {index + 1} 个 chunked 请求失败（HTTP {status}）"
+    finally:
+        conn.close()
+    assert [e.get("marker") for e in events] == [0, 1, 2]
+
+
+def test_chunked_multi_chunk_body(server: EventServer, events: list[dict]) -> None:
+    """分成多个 chunk 发送也要能拼回完整请求体。"""
+    payload = {"marker": "multi", "text": "中" * 500}
+    raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    half = len(raw) // 2
+    parts = [raw[:half], raw[half:]]
+
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        conn.putrequest("POST", "/", skip_accept_encoding=True)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("x-signature", sign(TOKEN, raw))
+        conn.putheader("Transfer-Encoding", "chunked")
+        conn.endheaders()
+        for part in parts:
+            conn.send(f"{len(part):X}\r\n".encode("ascii") + part + b"\r\n")
+        conn.send(b"0\r\n\r\n")
+        response = conn.getresponse()
+        status = response.status
+        response.read()
+    finally:
+        conn.close()
+
+    assert status == 200
+    assert events and events[0]["marker"] == "multi"
+
+
+def test_chunked_with_bad_signature_is_rejected(server: EventServer, events: list[dict]) -> None:
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        raw = b'{"marker": "bad"}'
+        status, _body = post_chunked(conn, raw, {"x-signature": sign("wrong", raw)})
+    finally:
+        conn.close()
+    assert status == 401
+    assert events == []
+
+
+def test_oversized_chunked_body_is_rejected(server: EventServer, events: list[dict]) -> None:
+    """超大 chunked 请求体要拒绝并断开，不能把内存吃爆。"""
+    import qlark.events.server as server_module
+
+    original = server_module.MAX_BODY_BYTES
+    server_module.MAX_BODY_BYTES = 1024
+    conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    try:
+        raw = b"z" * 5000
+        status, _body = post_chunked(conn, raw, {"x-signature": sign(TOKEN, raw)})
+    finally:
+        conn.close()
+        server_module.MAX_BODY_BYTES = original
+
+    assert status == 401, "鉴权在读取之后才判；超大时先失败也算可接受，但不能 200"
+    assert events == []
+
+
 def test_health_endpoint(server: EventServer) -> None:
     conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
     try:
