@@ -55,7 +55,10 @@ PROBE_JS = r"""
     if (!hiddenY && !hiddenX) continue;
     var overY = el.scrollHeight - el.clientHeight;
     var overX = el.scrollWidth - el.clientWidth;
-    if ((hiddenY && overY > 2) || (hiddenX && overX > 2)) {
+    // 横向溢出但配了 text-overflow: ellipsis —— 那是**故意**截断的（侧边栏状态
+    // 这类单行文字就是这样），不是 bug。只有纵向溢出或没配省略号才算问题。
+    var ellipsis = cs.textOverflow === 'ellipsis' || cs.textOverflow === 'string';
+    if ((hiddenY && overY > 2) || (hiddenX && overX > 2 && !ellipsis)) {
       out.clipped.push({
         el: describe(el),
         overflow: cs.overflowX + '/' + cs.overflowY,

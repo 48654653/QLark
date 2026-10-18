@@ -119,6 +119,8 @@
     bMemeDir: $('bMemeDir'), btnMemeDirBrowse: $('btnMemeDirBrowse'), memeDirHint: $('memeDirHint'),
     eMemeDir: $('eMemeDir'),
     bSplitChance: $('bSplitChance'), eSplitChance: $('eSplitChance'),
+    nSplitChanceOverride: $('nSplitChanceOverride'),
+    nMemeChanceOverride: $('nMemeChanceOverride'),
     bMemeChance: $('bMemeChance'), eMemeChance: $('eMemeChance'),
     bReplyRubric: $('bReplyRubric'),
     bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
@@ -1139,6 +1141,7 @@
       split_max_messages: numOr(s.split_max_messages, 2),
       split_delay_ms: numOr(s.split_delay_ms, 500),
       meme_chance: numOr(s.meme_chance, 0.2),
+      chance_overrides: (s.chance_overrides && typeof s.chance_overrides === 'object') ? s.chance_overrides : null,
       reply_rubric_enabled: (s.reply_rubric_enabled === undefined) ? true : !!s.reply_rubric_enabled,
       meme_dir: String(s.meme_dir || ''),
       meme_dir_effective: String(s.meme_dir_effective || ''),
@@ -1223,6 +1226,7 @@
     dom.bMemeDir.value = cfg.meme_dir || '';
     dom.bSplitChance.value = String(Math.round(cfg.split_chance * 100));
     dom.bMemeChance.value = String(Math.round(cfg.meme_chance * 100));
+    paintChanceOverrides(cfg.chance_overrides);
     dom.bReplyRubric.checked = cfg.reply_rubric_enabled !== false;
     dom.bSplitMax.value = String(cfg.split_max_messages);
     dom.bSplitDelay.value = String(cfg.split_delay_ms);
@@ -1771,6 +1775,35 @@
     ];
     rows.forEach(function (pair) {
       if (pair[0]) pair[0].placeholder = '留空 = 跟随全局（' + pair[1] + '）';
+    });
+  }
+
+  /**
+   * 在「分段概率 / 表情概率」下面提示哪些人设覆盖了全局值。
+   *
+   * 不提示的话会这样：用户把全局设成 90%，某个人设上却存着 10%，
+   * 那个会话永远是 10%，界面上完全看不出来 —— 看起来就像"概率坏了"。
+   * 只在**确实有覆盖**时才显示，平时不占地方。
+   */
+  function paintChanceOverrides(overrides) {
+    var table = [
+      ['split_chance', dom.nSplitChanceOverride],
+      ['meme_chance', dom.nMemeChanceOverride]
+    ];
+    table.forEach(function (pair) {
+      var box = pair[1];
+      if (!box) return;
+      var list = (overrides || {})[pair[0]] || [];
+      if (!list.length) {
+        box.hidden = true;
+        box.textContent = '';
+        return;
+      }
+      var parts = list.map(function (item) {
+        return (item.name || ('人设' + item.uid)) + ' ' + item.percent + '%';
+      });
+      box.textContent = '有 ' + list.length + ' 个人设设了自己的值，不按这个来：' + parts.join('、');
+      box.hidden = false;
     });
   }
 

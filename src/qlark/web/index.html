@@ -292,7 +292,7 @@
             <label class="field">
               <span class="field-label">对话模型</span>
               <input class="input" id="mModel" type="text" placeholder="deepseek-chat" spellcheck="false" autocomplete="off">
-              <span class="field-hint">直接填服务商给出的模型名，不做下拉限制</span>
+              
               <span class="field-err" id="eModel" hidden></span>
             </label>
 
@@ -313,14 +313,14 @@
             <label class="field">
               <span class="field-label">最大输出 Token</span>
               <input class="input" id="mMaxTokens" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="4096">
-              <span class="field-hint">范围 1 – 32000</span>
+              
               <span class="field-err" id="eMaxTokens" hidden></span>
             </label>
 
             <label class="field">
               <span class="field-label">温度</span>
               <input class="input" id="mTemperature" type="number" min="0" max="2" step="0.1" inputmode="decimal" placeholder="1">
-              <span class="field-hint">范围 0 – 2，越大越发散</span>
+              
               <span class="field-err" id="eTemperature" hidden></span>
             </label>
 
@@ -369,28 +369,28 @@
             <label class="field">
               <span class="field-label">本机监听地址</span>
               <input class="input" id="nOnebotHost" type="text" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
-              <span class="field-hint">NapCat OneBot 服务的绑定地址</span>
+              
               <span class="field-err" id="eOnebotHost" hidden></span>
             </label>
 
             <label class="field">
               <span class="field-label">OneBot 动作端口</span>
               <input class="input" id="nOnebotPort" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="3000">
-              <span class="field-hint">QLark 调用 NapCat 的 HTTP / WS 端口</span>
+              
               <span class="field-err" id="eOnebotPort" hidden></span>
             </label>
 
             <label class="field">
               <span class="field-label">QLark 事件端口</span>
               <input class="input" id="nEventPort" type="number" min="1" max="65535" step="1" inputmode="numeric" placeholder="3001">
-              <span class="field-hint">NapCat 反向推送事件到 QLark 的端口</span>
+              
               <span class="field-err" id="eEventPort" hidden></span>
             </label>
 
             <label class="field">
               <span class="field-label">事件监听地址</span>
               <input class="input" id="nEventHost" type="text" placeholder="127.0.0.1" spellcheck="false" autocomplete="off">
-              <span class="field-hint">QLark 事件服务绑定地址</span>
+              
               <span class="field-err" id="eEventHost" hidden></span>
             </label>
 
@@ -438,7 +438,7 @@
             <label class="field">
               <span class="field-label">记忆轮数</span>
               <input class="input" id="bMemoryRounds" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="20">
-              <span class="field-hint">每次请求携带的最近对话轮数，默认 20</span>
+              
               <span class="field-err" id="eMemoryRounds" hidden></span>
             </label>
 
@@ -483,6 +483,7 @@
               <span class="field-label">分段概率（%）</span>
               <input class="input" id="bSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
               <span class="field-hint">**只有人设勾选了「随机分段回复」的会话才受影响。**掷骰子由程序来做，没掷中时那条规则根本不会发给模型</span>
+              <span class="field-err" id="nSplitChanceOverride" hidden></span>
               <span class="field-err" id="eSplitChance" hidden></span>
             </label>
 
@@ -490,6 +491,7 @@
               <span class="field-label">表情概率（%）</span>
               <input class="input" id="bMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
               <span class="field-hint">与分段**相互独立**，所以「只发一条但配个表情」也会出现</span>
+              <span class="field-err" id="nMemeChanceOverride" hidden></span>
               <span class="field-err" id="eMemeChance" hidden></span>
             </label>
 
@@ -513,7 +515,7 @@
             <label class="field">
               <span class="field-label">多条之间的间隔（毫秒）</span>
               <input class="input" id="bSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
-              <span class="field-hint">瞬间连发一眼就是机器人；500 毫秒左右最像人在打字</span>
+              
               <span class="field-err" id="eSplitDelay" hidden></span>
             </label>
 
@@ -604,7 +606,7 @@
                     <span class="switch-track"><span class="switch-thumb"></span></span>
                     <span class="switch-text">参与 /person 切换</span>
                   </label>
-                  <span class="field-hint">关闭后不能再被切换到该人设</span>
+                  
                 </div>
 
                 <label class="field">
@@ -649,13 +651,13 @@
                   <label class="field">
                     <span class="field-label">多段连发间隔（毫秒）</span>
                     <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
-                    <span class="field-hint">留空 = 跟随全局</span>
+                    <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
                     <span class="field-err" id="ePSplitDelay" hidden></span>
                   </label>
                   <label class="field">
                     <span class="field-label">多段连发概率（%）</span>
                     <input class="input" id="pSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
-                    <span class="field-hint">留空 = 跟随全局</span>
+                    <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
                     <span class="field-err" id="ePSplitChance" hidden></span>
                   </label>
                 </div>
@@ -663,7 +665,7 @@
                 <label class="field">
                   <span class="field-label">发送图片概率（%）</span>
                   <input class="input" id="pMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
-                  <span class="field-hint">留空 = 跟随全局。与多段连发彼此独立</span>
+                  <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**，那个会话只按这里的值掷骰子</span>
                   <span class="field-err" id="ePMemeChance" hidden></span>
                 </label>
 
@@ -740,7 +742,7 @@
                 <span class="switch-track"><span class="switch-thumb"></span></span>
                 <span class="switch-text">原文满 W 轮后自动压缩成摘要</span>
               </label>
-              <span class="field-hint">关闭后原文无限累积，不做压缩</span>
+              
             </div>
 
             <label class="field">
@@ -1117,7 +1119,7 @@
           <label class="field">
             <span class="field-label">对话模型</span>
             <input class="input" id="wizModel" type="text" placeholder="deepseek-chat" spellcheck="false" autocomplete="off">
-            <span class="field-hint">直接填服务商给出的模型名</span>
+            
           </label>
         </div>
         <div class="wiz-test-row">

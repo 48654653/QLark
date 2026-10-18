@@ -621,6 +621,23 @@ class MessagePipeline:
             return fallback
         return value
 
+    def effective_chance(self, persona_uid: int, key: str) -> float:
+        """这个会话**实际生效**的概率（人设覆盖值优先，其次全局）。
+
+        界面用它显示"这一档到底是多少"。不显示的话就会出现这种情况：
+        用户把全局设成 90%，但某个人设上存着 10%，那个会话永远是 10%，
+        **界面上完全看不出来** —— 看起来就像"概率坏了"。
+        """
+        persona = self.personas.get(persona_uid)
+        enabled_key = "meme_enabled" if key.startswith("meme") else "split_enabled"
+        if persona is not None and not persona.get(enabled_key):
+            return 0.0
+        try:
+            value = float(self._effective(persona, key, self.settings.get(key, 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, value))
+
     def _roll_length(self) -> str:
         """（已废弃）回复长度档位 —— 永远返回 ``normal``。
 
@@ -778,12 +795,24 @@ class MessagePipeline:
         return plan
 
     def _attach_meme(self, plan: ReplyPlan) -> None:
-        """按情绪名挑一张表情图；挑不到就静默不配（绝不能因此报错）。"""
+        """按情绪名挑一张表情图；挑不到就不配（绝不能因此报错）。
+
+        **这里绝不做"随机补一张"。** 做过一次，被否掉了，否得对：
+        配一张和这句话毫无关系的图，比不配更糟 —— 那正是"假"的来源。
+        所以模型给的名字对不上时，宁可这一轮没有图。
+
+        真正该修的是**让模型别编名字**（见 ``reply_format.MEME_RULE_DEFAULT``
+        里"只能原样复制"的写法），而不是在下面偷偷兜底。
+        """
         if not plan.meme:
             return
         item = self._meme_library().pick(plan.meme)
         if item is None:
-            self._log(f"表情「{plan.meme}」在目录里找不到，本轮不配图", level="warn")
+            self._log(
+                f"模型给的表情「{plan.meme}」在目录里找不到，本轮不配图"
+                "（这是模型没按列表取词，不是概率没生效）",
+                level="warn",
+            )
             plan.meme = None
             return
         plan.image_path = item.path

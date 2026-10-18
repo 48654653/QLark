@@ -137,7 +137,34 @@ class Application:
         return self.bot.pipeline.personas
 
     def get_model_config(self) -> dict[str, Any]:
-        return model_config.snapshot(self.settings)
+        result = model_config.snapshot(self.settings)
+        # 哪些人设**覆盖**了分段/表情概率。
+        #
+        # 必须报出来：用户把全局设成 90%，但那个人设上存着 10%，那个会话就永远是
+        # 10%，而界面上看不出来 —— 看起来就像"概率坏了"（真踩过）。
+        result["chance_overrides"] = self._chance_overrides()
+        return result
+
+    def _chance_overrides(self) -> dict[str, list[dict[str, Any]]]:
+        """列出压过全局的人设。只在**值确实不同**时才报，避免噪音。"""
+        out: dict[str, list[dict[str, Any]]] = {"split_chance": [], "meme_chance": []}
+        enabled_key = {"split_chance": "split_enabled", "meme_chance": "meme_enabled"}
+        for persona in self.personas.list_public():
+            if not persona.get("enabled"):
+                continue
+            for key, flag in enabled_key.items():
+                value = persona.get(key)
+                if value is None or not persona.get(flag):
+                    continue
+                try:
+                    percent = round(float(value) * 100)
+                except (TypeError, ValueError):
+                    continue
+                if percent != round(float(self.settings.get(key) or 0) * 100):
+                    out[key].append(
+                        {"uid": persona.get("uid"), "name": persona.get("name"), "percent": percent}
+                    )
+        return out
 
     def apply_model_config(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = model_config.apply_model(self.settings, payload or {})
