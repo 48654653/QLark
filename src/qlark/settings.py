@@ -80,6 +80,8 @@ DEFAULTS: dict[str, Any] = {
     "reply_retry_max": 1,
     #: 重试用尽后的兜底文案
     "reply_fallback_text": "服务器宕机了喵",
+    #: 是否注入「回复判断表」（教模型按情境判断该回多长、该不该认真）
+    "reply_rubric_enabled": True,
     #: 模型思考强度：off / auto / low / medium / high / max（空串 = 不发送，跟随服务端默认）
     #:
     #: **默认 off**。实测 DeepSeek 的默认是「开思考」，而一次闲聊回复里有

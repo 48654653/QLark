@@ -300,3 +300,18 @@ def wait_for(predicate, timeout: float = 30.0, interval: float = 0.1) -> bool:
             return True
         _time.sleep(interval)
     return bool(predicate())
+
+
+def wait_memory(store, key: str, *, min_rows: int = 1, timeout: float = 10.0) -> bool:
+    """等到记忆**真的落库**了再往下断言。
+
+    **为什么需要这个**：pipeline 是**先发送、后落库**（故意的 —— 这样记忆里不会
+    出现"有问无答"的空洞）。所以"收到回复"不等于"已经写进数据库"；
+    收到回复就立刻查库，满负载时必然偶发失败。
+
+    这个坑已经踩过四次：人设记忆隔离、/reset 清记忆、摘要统计、
+    assistant 消息没加块。以后凡是"发消息 → 查库"，都先等这个。
+
+    用法：``assert wait_memory(store, key, min_rows=2)``，再读库断言内容。
+    """
+    return wait_for(lambda: len(store.memory_messages(key)) >= min_rows, timeout=timeout)

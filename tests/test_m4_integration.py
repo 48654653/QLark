@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import FakeOpenAI, _get, _post, wait_for
+from conftest import FakeOpenAI, _get, _post, wait_for, wait_memory
 from qlark.chat.store import memory_key
 from qlark.core.models import Phase
 
@@ -77,8 +77,12 @@ def test_summary_stats_are_counted(ready, fake_openai: FakeOpenAI) -> None:
     key = memory_key("private:2658495997", 1)
     assert wait_for(lambda: bool(store.summary_text(key)), timeout=30)
 
-    # 2 次对话 + 至少 1 次总结
-    assert ready.db.stats_today().calls >= before + 3
+    # 2 次对话 + 至少 1 次总结。
+    # 注意：summarizer 里是**先 apply_summary 落库、后 bump_stats 计数**，
+    # 所以"摘要出现"不等于"统计已经加上了"，这里必须等统计本身。
+    assert wait_for(
+        lambda: ready.db.stats_today().calls >= before + 3, timeout=10
+    ), f"总结调用的 token 没计入统计（当前 {ready.db.stats_today().calls}，期望 ≥{before + 3}）"
 
 
 def test_summary_disabled_keeps_raw_history(ready, fake_openai: FakeOpenAI) -> None:
@@ -157,6 +161,8 @@ def test_memories_are_isolated_between_private_users(ready, fake_openai: FakeOpe
     _say(ready, "我是乙", user_id="222222", message_id=402)
 
     store = ready.bot.pipeline.store
+    assert wait_memory(store, memory_key("private:111111", 1), min_rows=2)
+    assert wait_memory(store, memory_key("private:222222", 1), min_rows=2)
     assert store.message_count(memory_key("private:111111", 1)) == 2
     assert store.message_count(memory_key("private:222222", 1)) == 2
 

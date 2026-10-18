@@ -254,12 +254,19 @@ def test_persona_override_changes_model_request(live, fake_openai: FakeOpenAI) -
 
 
 def test_empty_persona_sends_no_system_message(live, fake_openai: FakeOpenAI) -> None:
-    """空人设不能发一条空的 system —— 部分 OpenAI 兼容服务会因此报错。"""
+    """空人设不能发一条空的 system —— 部分 OpenAI 兼容服务会因此报错。
+
+    注意：QLark 自己**会**注入 system 块（回复判断表、格式提醒），
+    所以这里断言的是"没有**空的** system"，不是"完全没有 system"。
+    回复判断表本身是常驻的，这里关掉它，聚焦在人设上。
+    """
+    live.settings.update(reply_rubric_enabled=False)
     _inject(live.home, text="空人设测试")
     assert wait_for(lambda: _reply_texts(live.home), timeout=30)
 
     messages = fake_openai.requests()[-1]["messages"]
-    assert all(message["role"] != "system" for message in messages)
+    system_blocks = [m for m in messages if m["role"] == "system"]
+    assert all(str(m.get("content") or "").strip() for m in system_blocks), "发了一条空的 system"
     assert messages[0]["role"] == "user"
 
 

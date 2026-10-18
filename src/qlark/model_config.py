@@ -53,6 +53,8 @@ MODEL_FIELDS = (
     "split_delay_ms",
     "meme_chance",
     "meme_dir",
+    # 回复判断表：教模型按情境判断该回多长、该不该认真
+    "reply_rubric_enabled",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -103,6 +105,7 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "split_delay_ms": settings.split_delay_ms,
         "meme_chance": settings.meme_chance,
         "meme_dir": settings.meme_dir,
+        "reply_rubric_enabled": bool(settings.get("reply_rubric_enabled", True)),
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -221,7 +224,10 @@ def validate_model(payload: dict[str, Any], current: dict[str, Any]) -> dict[str
             elif not low <= value <= high:
                 errors[key] = f"{label}必须在 {low}~{high} 之间"
 
-    for key, label in (("split_chance", "分段概率"), ("meme_chance", "表情概率")):
+    for key, label in (
+        ("split_chance", "分段概率"),
+        ("meme_chance", "表情概率"),
+    ):
         if key in payload:
             value = _as_float(payload[key])
             if value is None:
@@ -325,6 +331,8 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
     for key in ("split_chance", "meme_chance"):
         if key in payload:
             updates[key] = _as_float(payload[key])
+    if "reply_rubric_enabled" in payload:
+        updates["reply_rubric_enabled"] = bool(payload["reply_rubric_enabled"])
     if "meme_dir" in payload:
         updates["meme_dir"] = str(payload["meme_dir"] or "").strip()
     if "blocked_words" in payload:

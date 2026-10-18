@@ -23,7 +23,7 @@ import datetime as _dt
 
 import pytest
 
-from conftest import FakeOpenAI, _get, wait_for
+from conftest import FakeOpenAI, _get, wait_for, wait_memory
 from qlark.chat.pipeline import build_labeled_message, clean_sender_name, format_stamp
 from qlark.chat.store import memory_key
 
@@ -150,7 +150,9 @@ def test_group_label_is_stored_in_memory(ready, fake_openai: FakeOpenAI) -> None
 
     _send(ready, "我喜欢喝美式", message_id=3003, nickname="毛糙蛋")
 
-    rows = ready.bot.pipeline.store.memory_messages(memory_key(f"group:{GROUP}", 1))
+    key = memory_key(f"group:{GROUP}", 1)
+    assert wait_memory(ready.bot.pipeline.store, key, min_rows=2), "记忆没落库"
+    rows = ready.bot.pipeline.store.memory_messages(key)
     user_row = next(r for r in rows if r["role"] == "user")
     fields = _lines(user_row["content"])
     assert fields.get("昵称") == "毛糙蛋"
@@ -169,7 +171,9 @@ def test_assistant_reply_is_not_labeled(ready, fake_openai: FakeOpenAI) -> None:
 
     _send(ready, "你好", message_id=3004)
 
-    rows = ready.bot.pipeline.store.memory_messages(memory_key(f"group:{GROUP}", 1))
+    key = memory_key(f"group:{GROUP}", 1)
+    assert wait_memory(ready.bot.pipeline.store, key, min_rows=2), "记忆没落库"
+    rows = ready.bot.pipeline.store.memory_messages(key)
     assistant_row = next(r for r in rows if r["role"] == "assistant")
     assert not assistant_row["content"].startswith("昵称："), assistant_row["content"]
 

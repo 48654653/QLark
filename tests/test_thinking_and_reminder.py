@@ -19,7 +19,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from conftest import FakeOpenAI, wait_for
+from conftest import FakeOpenAI, wait_for, wait_memory
 from qlark.chat.context import build_chat_messages
 from qlark.chat.reply_format import FORMAT_REMINDER, append_reminder, build_preview
 from qlark.chat.store import memory_key
@@ -128,9 +128,10 @@ def test_reminder_appears_twice_when_gate_hits(ready, fake_openai: FakeOpenAI) -
     payload = _payloads(fake_openai)[-1]
     messages = payload["messages"]
 
-    # ① 末尾 system
+    # ① 末尾 system（注意这一条里还可能带着常驻的「回复判断表」，
+    #    所以断言"包含"而不是"等于"）
     assert messages[-2]["role"] == "system", [m["role"] for m in messages]
-    assert messages[-2]["content"] == FORMAT_REMINDER
+    assert FORMAT_REMINDER in str(messages[-2]["content"])
     # ② 用户文本末尾
     assert messages[-1]["role"] == "user"
     assert str(messages[-1]["content"]).rstrip().endswith(FORMAT_REMINDER)
@@ -160,7 +161,9 @@ def test_reminder_never_reaches_memory(ready, fake_openai: FakeOpenAI) -> None:
 
     _say(ready)
 
-    rows = ready.bot.pipeline.store.memory_messages(memory_key(f"group:{GROUP}", 1))
+    key = memory_key(f"group:{GROUP}", 1)
+    assert wait_memory(ready.bot.pipeline.store, key, min_rows=2), "记忆没落库"
+    rows = ready.bot.pipeline.store.memory_messages(key)
     for row in rows:
         assert FORMAT_REMINDER not in row["content"], f"提醒进了记忆：{row['content']!r}"
         assert "提醒" not in row["content"]
@@ -168,7 +171,12 @@ def test_reminder_never_reaches_memory(ready, fake_openai: FakeOpenAI) -> None:
 
 def test_reminder_survives_the_regeneration_request(ready, fake_openai: FakeOpenAI) -> None:
     """重新生成时是接着原 messages 加两条，所以提醒仍在。"""
-    ready.settings.update(split_chance=1.0, meme_chance=0.0, reply_retry_max=1, split_delay_ms=0)
+    ready.settings.update(
+        split_chance=1.0,
+        meme_chance=0.0,
+        reply_retry_max=1,
+        split_delay_ms=0,
+    )
     ready.bot.pipeline.personas.update(1, {"split_enabled": True})
     fake_openai.replies("这不是 JSON", '{"messages": ["补好的"]}', repeat_last=True)
 

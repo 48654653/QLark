@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from conftest import FakeOpenAI, _get, _post, wait_for
+from conftest import FakeOpenAI, _get, _post, wait_for, wait_memory
 from qlark.chat.store import memory_key
 from qlark.core.models import Phase
 
@@ -246,6 +246,8 @@ def test_memory_is_isolated_between_groups(ready) -> None:
     assert wait_for(lambda: _reply_texts(ready.home), timeout=30)
 
     store = ready.bot.pipeline.store
+    assert wait_memory(store, memory_key("group:111111", 1), min_rows=2)
+    assert wait_memory(store, memory_key("group:222222", 1), min_rows=2)
     group1 = store.recent_rounds(memory_key("group:111111", 1), 20)
     group2 = store.recent_rounds(memory_key("group:222222", 1), 20)
     assert all("群二的" not in content for _, content in group1)

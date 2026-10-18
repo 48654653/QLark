@@ -47,6 +47,7 @@ from .personas import PersonaStore
 from .queue import SessionQueue
 from .reply_format import (
     FORMAT_REMINDER,
+    REPLY_RUBRIC,
     append_reminder,
     build_output_rules,
     compose_memory_text,
@@ -478,6 +479,9 @@ class MessagePipeline:
         # 随机分段 / 表情包：**骰子必须在组装提示词之前掷**。
         # 没掷中的那一项，它的规则块根本不进提示词 —— 模型不知道有这个能力，
         # 自然就不会用。这比在提示词里写"请你不要每次都这样"可靠一百倍。
+        #
+        # 注意：骰子只决定"要不要加一个可选的东西"（表情、连发），**不决定内容质量**。
+        # 长度和语气交给「回复判断表」让模型按情境判断（见下方 REPLY_RUBRIC）。
         allow_split, allow_meme, emotions, delay_ms = self._roll_expression(persona)
         rules = build_output_rules(
             split=allow_split,
@@ -487,7 +491,13 @@ class MessagePipeline:
             split_prompt=str(persona.get("split_prompt") or ""),
             meme_prompt=str(persona.get("meme_prompt") or ""),
         )
-        trailing_system = ""
+
+        # 末尾指令（离生成点最近，位置决定效果）：
+        #   ① 回复判断表 —— 教它按情境判断该回多长、该不该认真
+        #   ② 格式提醒   —— 格式错要重试、代价更高，所以放最后
+        trailing_blocks: list[str] = []
+        if bool(self.settings.get("reply_rubric_enabled", True)):
+            trailing_blocks.append(REPLY_RUBRIC)
         if rules:
             extra_system.append(rules)
             # 双保险：同一句提醒放**两处** —— 历史之后的 system、以及用户消息文本末尾。
@@ -495,8 +505,9 @@ class MessagePipeline:
             # 为什么非放两处：只放末尾 system 实测约 83%，剩下的失败集中在
             # "模型特别想表达"的那几句（辞职、相亲、工资）。两处都放 30/30 = 100%。
             # 详见 reply_format.FORMAT_REMINDER 的说明。
-            trailing_system = FORMAT_REMINDER
+            trailing_blocks.append(FORMAT_REMINDER)
             user_content = append_reminder(user_content)
+        trailing_system = "\n\n".join(trailing_blocks)
 
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆
         history = self.store.recent_rounds(key, rounds)
@@ -610,8 +621,25 @@ class MessagePipeline:
             return fallback
         return value
 
+    def _roll_length(self) -> str:
+        """（已废弃）回复长度档位 —— 永远返回 ``normal``。
+
+        删掉的原因：**这是一个上下文盲的决定。** 它在生成之前就把长度定好了，
+        而"该回多长"完全取决于对方说了什么。真实的翻车场景：
+        对方说「求你了，不@他我就会死」，掷到极短档就回一个「嗯」——
+        这比说错话更伤人。
+
+        更根本的教训：**骰子只能决定"要不要加一个可选的东西"（表情、连发），
+        不能决定"这条回复好不好"（长度、语气）。** 表情配错了无伤大雅；
+        敷衍一个正在情绪里的人是真伤害。
+
+        现在改由「回复判断表」（:data:`REPLY_RUBRIC`）让模型按情境自行判断。
+        保留这个方法只为兼容旧调用。
+        """
+        return "normal"
+
     def _roll_expression(
-        self, persona: dict[str, Any] | None
+        self, persona: dict[str, Any] | None, *, length_tier: str = "normal"
     ) -> tuple[bool, bool, list[str], int]:
         """掷骰子决定这一轮允不允许分段 / 配表情。
 
@@ -620,9 +648,13 @@ class MessagePipeline:
 
         分段和表情**各自独立掷**：这样才能出现"只发一条但配个表情"这种自然行为。
 
+        Args:
+            length_tier: 已废弃，保留参数只为兼容旧调用。
+
         Returns:
             ``(允许分段, 允许表情, 可用情绪, 多段连发间隔毫秒)``
         """
+        _ = length_tier
         split_on = bool(persona.get("split_enabled")) if persona else False
         meme_on = bool(persona.get("meme_enabled")) if persona else False
 

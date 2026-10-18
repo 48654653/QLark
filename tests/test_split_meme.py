@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from conftest import FakeOpenAI, _get, wait_for
+from conftest import FakeOpenAI, _get, wait_for, wait_memory
 from qlark.chat.memes import MemeLibrary
 from qlark.chat.reply_format import (
     MEME_PRESETS,
@@ -510,7 +510,9 @@ def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, me
 
     _say(ready)
 
-    rows = ready.bot.pipeline.store.memory_messages(memory_key(f"group:{GROUP}", 1))
+    key = memory_key(f"group:{GROUP}", 1)
+    assert wait_memory(ready.bot.pipeline.store, key, min_rows=2), "记忆没落库"
+    rows = ready.bot.pipeline.store.memory_messages(key)
     assistant = next(r for r in rows if r["role"] == "assistant")
     assert assistant["content"] == "快到中午了，你不会刚睡醒吧？", assistant["content"]
     assert '"messages"' not in assistant["content"], "JSON 进记忆了"

@@ -493,6 +493,16 @@
               <span class="field-err" id="eMemeChance" hidden></span>
             </label>
 
+            <div class="field">
+              <span class="field-label">回复判断表</span>
+              <label class="switch">
+                <input type="checkbox" id="bReplyRubric">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">让机器人按情境判断该回多长</span>
+              </label>
+              <span class="field-hint">**不是掷骰子，是让模型自己看情境**：打招呼就简短回，问事实就直答，对方在情绪里就认真回、不许敷衍，开玩笑就只接一个梗。同时约束「一次只说一件事、不超过三句」</span>
+            </div>
+
             <label class="field">
               <span class="field-label">一次最多几条</span>
               <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="2">

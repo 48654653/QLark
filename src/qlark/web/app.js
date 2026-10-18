@@ -120,6 +120,7 @@
     eMemeDir: $('eMemeDir'),
     bSplitChance: $('bSplitChance'), eSplitChance: $('eSplitChance'),
     bMemeChance: $('bMemeChance'), eMemeChance: $('eMemeChance'),
+    bReplyRubric: $('bReplyRubric'),
     bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
     bSplitDelay: $('bSplitDelay'), eSplitDelay: $('eSplitDelay'),
     bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
@@ -1138,6 +1139,7 @@
       split_max_messages: numOr(s.split_max_messages, 2),
       split_delay_ms: numOr(s.split_delay_ms, 500),
       meme_chance: numOr(s.meme_chance, 0.2),
+      reply_rubric_enabled: (s.reply_rubric_enabled === undefined) ? true : !!s.reply_rubric_enabled,
       meme_dir: String(s.meme_dir || ''),
       meme_dir_effective: String(s.meme_dir_effective || ''),
       meme_dir_available: !!s.meme_dir_available,
@@ -1221,6 +1223,7 @@
     dom.bMemeDir.value = cfg.meme_dir || '';
     dom.bSplitChance.value = String(Math.round(cfg.split_chance * 100));
     dom.bMemeChance.value = String(Math.round(cfg.meme_chance * 100));
+    dom.bReplyRubric.checked = cfg.reply_rubric_enabled !== false;
     dom.bSplitMax.value = String(cfg.split_max_messages);
     dom.bSplitDelay.value = String(cfg.split_delay_ms);
     paintMemeDirHint(cfg);
@@ -1271,6 +1274,7 @@
     // 界面用百分比，后端存 0~1
     payload.split_chance = ratioFromPercent(dom.bSplitChance, 0.25);
     payload.meme_chance = ratioFromPercent(dom.bMemeChance, 0.2);
+    payload.reply_rubric_enabled = !!dom.bReplyRubric.checked;
     payload.split_max_messages = inputNum(dom.bSplitMax);
     payload.split_delay_ms = inputNum(dom.bSplitDelay);
     payload.meme_dir = dom.bMemeDir.value.trim();
