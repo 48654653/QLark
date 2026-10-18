@@ -193,10 +193,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=1, help="每个场景跑几次")
     parser.add_argument("--no-rubric", action="store_true", help="不注入「回复判断表」（做对照）")
     parser.add_argument("--no-history", action="store_true", help="不带历史（排掉历史的影响）")
+    parser.add_argument(
+        "--prompt-file",
+        default="",
+        help="从这个文件读人设提示词，**不读数据库、也不写数据库** —— 用来先验证一份模板再决定要不要换上",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="打印每条回复全文")
     args = parser.parse_args(argv)
 
     settings, db, persona, history = load_context(args.persona)
+    if args.prompt_file:
+        prompt_path = Path(args.prompt_file)
+        if not prompt_path.is_file():
+            print(f"[FAIL] 找不到提示词文件：{prompt_path}")
+            return 1
+        persona = prompt_path.read_text(encoding="utf-8").strip()
+        print(f"（使用 {prompt_path.name} 里的提示词，{len(persona)} 字，不读写数据库）")
     if not persona:
         print(f"[FAIL] 人设 {args.persona} 不存在或提示词为空")
         return 1

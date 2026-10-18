@@ -86,7 +86,8 @@ REPLY_RUBRIC = """【这条消息该怎么回】
 1. **一次只说一件事。** 超过三句话就是在演讲了。
 2. **人设是调料，不是主菜。** 口癖、动作描写（尾巴、耳朵、眨眼）、米饭梗，
    十句里偶尔露一次就够，别每句都补一遍。
-3. **不用句号结尾。** 聊天没人这么打字。"""
+3. **一条消息里不要换行。** 真人聊天不会在一句话中间敲回车；
+   想说的东西多，就分两条发（能不能分由系统决定）。"""
 
 
 def append_reminder(content: Any, reminder: str = FORMAT_REMINDER) -> Any:
@@ -312,6 +313,41 @@ class ParsedReply:
         return "\n".join(self.messages)
 
 
+def normalize_message_text(text: Any) -> str:
+    """把一条要发出去的消息压成**单行**。
+
+    模型偶尔会在 JSON 字符串里写 ``\\n\\n``，那会变成 QQ 里的空行：
+
+    .. code-block:: text
+
+        白米饭。别的免谈
+
+        交朋友就算了
+
+    **真人不会这么聊天** —— 要么一句话说完，要么分两条发。
+
+    合并方式用**单个空格**，因为机器人本来就有空格断句的语感
+    （「在啊 咋了」「二啊 这还用问」），这样最贴近它自己的风格；
+    直接粘起来会变成「白米饭。别的免谈交朋友就算了」，反而读不通。
+    """
+    return " ".join(str(text or "").split())
+
+
+def _unescape_literals(text: str) -> str:
+    """把**字面上的** ``\\n`` / ``\\r\\n`` / ``\\t`` 转成真空白。
+
+    只在"抢救坏 JSON"这条路上需要：那时内容是从没解析成功的原文里抠出来的，
+    里面的 ``\\n`` 还是两个字符（反斜杠 + n），不是真换行。
+    """
+    return (
+        str(text)
+        .replace("\\r\\n", " ")
+        .replace("\\n", " ")
+        .replace("\\r", " ")
+        .replace("\\t", " ")
+    )
+
+
 def _as_messages(value: Any, *, limit: int) -> list[str]:
     """把 ``messages`` 字段归一化成字符串列表。"""
     items: list[Any]
@@ -332,7 +368,7 @@ def _as_messages(value: Any, *, limit: int) -> list[str]:
                 item = item.get("text") or item.get("content") or ""
             else:
                 item = " ".join(str(x) for x in item)
-        text = str(item or "").strip()
+        text = normalize_message_text(item)
         if text:
             out.append(text)
     return out[: max(1, int(limit))]
@@ -492,8 +528,9 @@ def salvage(text: str, *, max_messages: int = 2) -> list[str]:
     candidates = [match.group(1) for match in _QUOTED_RE.finditer(raw)]
     # 去掉像键名的那些（messages / meme 本身不是内容）
     skip = {"messages", "meme", "text", "content"}
+    # 连引号里的内容也要压成单行：模型会在中间塞换行，发出去就是空行
     phrases = [
-        item.replace('\\"', '"').replace("\\n", " ").strip()
+        normalize_message_text(_unescape_literals(item.replace('\\"', '"')))
         for item in candidates
         if item.strip().lower() not in skip
     ]
@@ -504,7 +541,7 @@ def salvage(text: str, *, max_messages: int = 2) -> list[str]:
     # 有 JSON 结构但连引号内容都没抠出来：把标点去掉，剩下的话还能用就用
     plain = re.sub(r'[{}\[\]"]', " ", raw)
     plain = re.sub(r"\b(messages|meme)\b\s*:", " ", plain)
-    plain = " ".join(plain.split()).strip(" ,:")
+    plain = normalize_message_text(_unescape_literals(plain)).strip(" ,:")
     return [plain] if len(plain) >= 2 else []
 
 
@@ -613,6 +650,7 @@ __all__ = [
     "build_output_rules",
     "build_preview",
     "compose_memory_text",
+    "normalize_message_text",
     "parse_reply",
     "preset_text",
     "salvage",
