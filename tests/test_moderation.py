@@ -205,7 +205,7 @@ def test_wizard_reflects_real_configuration(qlark_home) -> None:
         assert app.get_wizard_state()["steps"]["model"] is True, "配好了就该显示已配好"
 
         assert app.get_wizard_state()["steps"]["login"] is False
-        app.settings.qq_account = "2157649443"
+        app.settings.qq_account = "10000001"
         assert app.get_wizard_state()["steps"]["login"] is True
     finally:
         app.shutdown()

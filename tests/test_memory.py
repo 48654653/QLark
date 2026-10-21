@@ -383,7 +383,7 @@ def test_memory_keys_are_isolated(store: MessageStore) -> None:
     """群 / 人设 / 私聊之间记忆互不干扰（需求规格 §6.1）。"""
     other_group = memory_key("group:999", 1)
     other_persona = memory_key("group:123456", 2)
-    private = memory_key("private:2658495997", 1)
+    private = memory_key("private:20000002", 1)
 
     add_rounds(store, 2, key=KEY)
     add_rounds(store, 5, key=other_group)

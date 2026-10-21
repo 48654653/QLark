@@ -29,7 +29,7 @@ def _system_text(payload: dict) -> str:
     return ""
 
 
-def _say(env, text: str, *, user_id: str = "2658495997", message_id: int = 1) -> None:
+def _say(env, text: str, *, user_id: str = "20000002", message_id: int = 1) -> None:
     _reset(env.home)
     _inject(
         env.home,
@@ -47,7 +47,7 @@ def _say(env, text: str, *, user_id: str = "2658495997", message_id: int = 1) ->
 def test_summary_triggers_at_w_rounds(ready, fake_openai: FakeOpenAI) -> None:
     """满 W 轮后自动合并摘要，并把摘要作为独立 system 块带给后续请求。"""
     ready.settings.update(memory_rounds=2, auto_summary=True)
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
     store = ready.bot.pipeline.store
 
     _say(ready, "第一句", message_id=101)
@@ -74,7 +74,7 @@ def test_summary_stats_are_counted(ready, fake_openai: FakeOpenAI) -> None:
     _say(ready, "乙", message_id=112)
 
     store = ready.bot.pipeline.store
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
     assert wait_for(lambda: bool(store.summary_text(key)), timeout=30)
 
     # 2 次对话 + 至少 1 次总结。
@@ -87,7 +87,7 @@ def test_summary_stats_are_counted(ready, fake_openai: FakeOpenAI) -> None:
 
 def test_summary_disabled_keeps_raw_history(ready, fake_openai: FakeOpenAI) -> None:
     ready.settings.update(memory_rounds=2, auto_summary=False)
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
     store = ready.bot.pipeline.store
 
     _say(ready, "甲", message_id=201)
@@ -104,14 +104,14 @@ def test_summary_disabled_keeps_raw_history(ready, fake_openai: FakeOpenAI) -> N
 def test_failed_reply_is_not_written_to_memory(ready, fake_openai: FakeOpenAI) -> None:
     """模型调用失败的那一轮不写记忆，避免留下"有问无答"的空洞。"""
     ready.settings.update(memory_rounds=20, auto_summary=False)
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
 
     fake_openai.fail_next(times=99, status=500, message="boom")
     _reset(ready.home)
     _inject(
         ready.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=301,
         text="这句话会失败",
     )
@@ -142,7 +142,7 @@ def test_summary_failure_keeps_all_messages(ready, fake_openai: FakeOpenAI) -> N
     _say(ready, "第二句", message_id=312)
 
     store = ready.bot.pipeline.store
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
     assert wait_for(lambda: calls["n"] >= 1, timeout=30), "压缩没有被触发"
 
     assert store.summary_text(key) == ""
@@ -203,8 +203,8 @@ def test_deleting_persona_removes_its_memory(ready, fake_openai: FakeOpenAI) -> 
     personas = ready.bot.pipeline.personas
 
     uid = int(personas.create("临时人设")["uid"])
-    session = "private:2658495997"
-    store.set_session_persona(session, uid, session_type="private", session_ref="2658495997")
+    session = "private:20000002"
+    store.set_session_persona(session, uid, session_type="private", session_ref="20000002")
 
     _say(ready, "用人设2说的话", message_id=601)
     key2 = memory_key(session, uid)
@@ -214,7 +214,7 @@ def test_deleting_persona_removes_its_memory(ready, fake_openai: FakeOpenAI) -> 
     assert result.deleted_messages >= 2, "人设记忆没被连带删除"
     assert store.message_count(key2) == 0
     assert store.session_persona(
-        session, session_type="private", session_ref="2658495997"
+        session, session_type="private", session_ref="20000002"
     ) == 1, "会话应当静默回落到人设1"
 
 
@@ -228,7 +228,7 @@ def test_manual_summarize_reports_not_enough(ready) -> None:
     """
     ready.settings.update(memory_rounds=50, auto_summary=True)
     outcome = ready.bot.pipeline.summarizer.maybe_summarize(
-        memory_key("private:2658495997", 1)
+        memory_key("private:20000002", 1)
     )
     assert outcome.status == "not_enough"
 
@@ -240,7 +240,7 @@ def test_manual_summarize_ignores_auto_switch(ready, fake_openai: FakeOpenAI) ->
     """
     ready.settings.update(memory_rounds=2, auto_summary=False)
     store = ready.bot.pipeline.store
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
 
     _say(ready, "甲", message_id=701)
     _say(ready, "乙", message_id=702)

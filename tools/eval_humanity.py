@@ -171,19 +171,34 @@ class Run:
         return sum(self.scores)
 
 
-def load_context(persona_uid: int) -> tuple[Settings, Database, str, list[tuple[str, str]]]:
+def load_context(
+    persona_uid: int, memory_key: str = ""
+) -> tuple[Settings, Database, str, list[tuple[str, str]]]:
     db = Database(paths.db_path())
     settings = Settings(db)
     row = db.query("SELECT system_prompt FROM personas WHERE uid = ?", (persona_uid,))
     persona = str(row[0]["system_prompt"] or "").strip() if row else ""
-    history = [
-        (r["role"], r["content"])
-        for r in db.query(
-            "SELECT role, content FROM messages WHERE memory_key = ? ORDER BY id DESC LIMIT 8",
-            (f"private:2658495997:p{persona_uid}",),
+
+    # 历史默认取**消息最多的那个会话**，而不是写死某个号 ——
+    # 写死的话会把使用者自己的 QQ 号留在代码里。
+    if not memory_key:
+        rows = db.query(
+            "SELECT memory_key, COUNT(*) AS n FROM messages GROUP BY memory_key "
+            "ORDER BY n DESC LIMIT 1"
         )
-    ]
-    history.reverse()
+        memory_key = str(rows[0]["memory_key"]) if rows else ""
+
+    history: list[tuple[str, str]] = []
+    if memory_key:
+        history = [
+            (r["role"], r["content"])
+            for r in db.query(
+                "SELECT role, content FROM messages WHERE memory_key = ? "
+                "ORDER BY id DESC LIMIT 8",
+                (memory_key,),
+            )
+        ]
+        history.reverse()
     return settings, db, persona, history
 
 
@@ -194,6 +209,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-rubric", action="store_true", help="不注入「回复判断表」（做对照）")
     parser.add_argument("--no-history", action="store_true", help="不带历史（排掉历史的影响）")
     parser.add_argument(
+        "--memory-key",
+        default="",
+        help="用哪个会话的历史当背景；留空 = 自动取消息最多的那个会话",
+    )
+    parser.add_argument(
         "--prompt-file",
         default="",
         help="从这个文件读人设提示词，**不读数据库、也不写数据库** —— 用来先验证一份模板再决定要不要换上",
@@ -201,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--verbose", "-v", action="store_true", help="打印每条回复全文")
     args = parser.parse_args(argv)
 
-    settings, db, persona, history = load_context(args.persona)
+    settings, db, persona, history = load_context(args.persona, args.memory_key)
     if args.prompt_file:
         prompt_path = Path(args.prompt_file)
         if not prompt_path.is_file():

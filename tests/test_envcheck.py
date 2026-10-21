@@ -87,8 +87,8 @@ def _fake_tencent_files(tmp_path: Path, accounts: list[str]) -> Path:
 
 
 def test_detect_credential_accounts(tmp_path: Path) -> None:
-    root = _fake_tencent_files(tmp_path, ["2157649443", "2658495997"])
-    assert envcheck.detect_credential_accounts(root) == ["2157649443", "2658495997"]
+    root = _fake_tencent_files(tmp_path, ["10000001", "20000002"])
+    assert envcheck.detect_credential_accounts(root) == ["10000001", "20000002"]
 
 
 def test_detect_credential_accounts_missing_root(tmp_path: Path) -> None:
@@ -96,27 +96,27 @@ def test_detect_credential_accounts_missing_root(tmp_path: Path) -> None:
 
 
 def test_credential_item_ok_when_account_saved(tmp_path: Path) -> None:
-    root = _fake_tencent_files(tmp_path, ["2157649443"])
-    item = envcheck.check_qq_credential("2157649443", root=root)
+    root = _fake_tencent_files(tmp_path, ["10000001"])
+    item = envcheck.check_qq_credential("10000001", root=root)
     assert item.ok is True
     assert item.critical is False
     assert "免扫码" in item.detail
 
 
 def test_credential_item_fails_when_account_has_no_credentials(tmp_path: Path) -> None:
-    root = _fake_tencent_files(tmp_path, ["2658495997"])
-    item = envcheck.check_qq_credential("2157649443", root=root)
+    root = _fake_tencent_files(tmp_path, ["20000002"])
+    item = envcheck.check_qq_credential("10000001", root=root)
     assert item.ok is False
     assert "扫码" in item.detail
 
 
 def test_credential_item_lists_detected_accounts_on_first_run(tmp_path: Path) -> None:
     """首次运行时应当告诉用户本机有哪些号可以扫码登录，而不是笼统说"没有账号"。"""
-    root = _fake_tencent_files(tmp_path, ["2157649443", "2658495997"])
+    root = _fake_tencent_files(tmp_path, ["10000001", "20000002"])
     item = envcheck.check_qq_credential(None, root=root)
     assert item.ok is False
     assert item.critical is False
-    assert "2157649443" in item.detail and "2658495997" in item.detail
+    assert "10000001" in item.detail and "20000002" in item.detail
     assert "2 个" in item.detail
 
 

@@ -213,12 +213,12 @@ def test_message_counts_are_reported(stores) -> None:
 def test_whitelist_add_remove(stores) -> None:
     _db, _messages, personas = stores
     assert personas.whitelist() == []
-    assert personas.add_whitelist("2157649443") == ["2157649443"]
-    assert personas.is_whitelisted("2157649443") is True
-    assert personas.add_whitelist("2157649443") == ["2157649443"], "重复添加不应报错"
-    assert personas.whitelist() == ["2157649443"]
-    assert personas.remove_whitelist("2157649443") == []
-    assert personas.is_whitelisted("2157649443") is False
+    assert personas.add_whitelist("10000001") == ["10000001"]
+    assert personas.is_whitelisted("10000001") is True
+    assert personas.add_whitelist("10000001") == ["10000001"], "重复添加不应报错"
+    assert personas.whitelist() == ["10000001"]
+    assert personas.remove_whitelist("10000001") == []
+    assert personas.is_whitelisted("10000001") is False
 
 
 @pytest.mark.parametrize("bad", ["abc", "", "123", "1" * 20])

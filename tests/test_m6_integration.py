@@ -21,7 +21,7 @@ def _send(env, text: str, *, message_id: int) -> None:
     _inject(
         env.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=message_id,
         text=text,
     )
@@ -66,7 +66,7 @@ def test_blocked_message_is_not_written_to_memory(ready, fake_openai: FakeOpenAI
     _send(ready, "刷屏广告内容", message_id=1103)
     assert wait_for(lambda: ready.bot.pipeline.stats.blocked >= 1, timeout=20)
 
-    key = memory_key("private:2658495997", 1)
+    key = memory_key("private:20000002", 1)
     assert ready.bot.pipeline.store.message_count(key) == 0, "被拦的消息不该进记忆"
 
 

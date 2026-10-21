@@ -63,7 +63,7 @@ def _send(env, text: str, *, message_id: int, group: bool = True, **kwargs) -> N
     _reset(env.home)
     payload = {
         "message_type": "group" if group else "private",
-        "user_id": MEMBER if group else "2658495997",
+        "user_id": MEMBER if group else "20000002",
         "message_id": message_id,
         "text": text,
         "at_bot": True,

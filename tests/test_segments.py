@@ -11,7 +11,7 @@ import pytest
 
 from qlark.onebot.segments import build_reply_segment, build_text_segments, parse_segments
 
-BOT = "2157649443"
+BOT = "10000001"
 
 
 def test_text_segments_are_joined() -> None:

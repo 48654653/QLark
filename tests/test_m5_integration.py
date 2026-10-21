@@ -17,7 +17,7 @@ from qlark.core.models import Phase
 
 from test_m2_integration import _inject, _reply_texts, _reset, ready  # noqa: F401
 
-KEY = memory_key("private:2658495997", 1)
+KEY = memory_key("private:20000002", 1)
 
 IMAGE_SEGMENTS = [
     {"type": "text", "data": {"text": "看看这张图"}},
@@ -65,7 +65,7 @@ def _send_image(env, *, message_id: int = 900) -> None:
     _inject(
         env.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=message_id,
         text="看看这张图",
         segments=IMAGE_SEGMENTS,
@@ -159,7 +159,7 @@ def test_image_limit_is_respected(vision_ready, fake_openai: FakeOpenAI) -> None
     _inject(
         vision_ready.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=904,
         text="三张图",
         segments=segments,
@@ -209,7 +209,7 @@ def test_ordinary_error_is_not_treated_as_vision_failure(vision_ready, fake_open
     _inject(
         vision_ready.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=906,
         text="看看这张图",
         segments=IMAGE_SEGMENTS,
@@ -232,7 +232,7 @@ def test_broken_image_falls_back_to_placeholder(vision_ready, fake_openai: FakeO
     _inject(
         vision_ready.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=907,
         text="坏图",
         segments=segments,
@@ -256,7 +256,7 @@ def test_direct_url_is_used_without_get_image(vision_ready, fake_openai: FakeOpe
     _inject(
         vision_ready.home,
         message_type="private",
-        user_id="2658495997",
+        user_id="20000002",
         message_id=908,
         text="带 url 的图",
         segments=[

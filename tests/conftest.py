@@ -62,7 +62,7 @@ def qlark_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespa
 
     monkeypatch.setenv("FAKE_NAPCAT_PORT", str(port))
     monkeypatch.setenv("FAKE_NAPCAT_TOKEN", TEST_TOKEN)
-    monkeypatch.setenv("FAKE_NAPCAT_QQ", "2157649443")
+    monkeypatch.setenv("FAKE_NAPCAT_QQ", "10000001")
     monkeypatch.setenv("FAKE_NAPCAT_QR_INTERVAL", "1")
     monkeypatch.setenv("FAKE_NAPCAT_SCAN_DELAY", "1")
     monkeypatch.delenv("FAKE_NAPCAT_HAVE_CRED", raising=False)
@@ -80,7 +80,7 @@ def qlark_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespa
         port=port,
         event_port=event_port,
         token=TEST_TOKEN,
-        qq="2157649443",
+        qq="10000001",
     )
 
 

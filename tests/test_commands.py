@@ -29,7 +29,7 @@ def make_event(
         message_type="group" if group else "private",
         sub_type="normal",
         user_id=user,
-        self_id="2157649443",
+        self_id="10000001",
         group_id=group_id if group else None,
         sender={"user_id": user, "nickname": "测试用户"},
     )

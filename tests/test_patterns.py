@@ -9,10 +9,10 @@ from qlark.napcat import patterns
 
 
 def test_quick_login_line() -> None:
-    line = "16:05:43 [info] 正在快速登录  2157649443"
+    line = "16:05:43 [info] 正在快速登录  10000001"
     match = patterns.RE_QUICK_LOGIN.search(line)
     assert match is not None
-    assert match.group(1) == "2157649443"
+    assert match.group(1) == "10000001"
 
 
 def test_worker_logged_in_variants() -> None:
@@ -45,17 +45,17 @@ def test_account_config_line() -> None:
     """登录后 NapCat 打印的配置加载行里带着 QQ 号 —— 扫码模式靠它认账号。"""
     line = (
         "03:56:32 [debug] [Core] [Config] 配置文件"
-        "E:\\QLark\\runtime\\napcat\\napcat\\config\\napcat_2157649443.json加载 "
+        "E:\\QLark\\runtime\\napcat\\napcat\\config\\napcat_10000001.json加载 "
         '{"fileLog":false}'
     )
     match = patterns.RE_ACCOUNT_CONFIG.search(line)
     assert match is not None
-    assert match.group(1) == "2157649443"
+    assert match.group(1) == "10000001"
 
 
 def test_account_config_line_does_not_match_other_files() -> None:
     assert patterns.RE_ACCOUNT_CONFIG.search("配置文件 napcat.json 加载") is None
-    assert patterns.RE_ACCOUNT_CONFIG.search("配置文件 onebot11_2157649443.json 加载") is None
+    assert patterns.RE_ACCOUNT_CONFIG.search("配置文件 onebot11_10000001.json 加载") is None
 
 
 def test_parse_level() -> None:

@@ -119,7 +119,7 @@ def test_accepts_napcat_style_x_signature(server: EventServer, events: list[dict
     """NapCat 实际发的是 x-signature，不是 Authorization。"""
     conn = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
     try:
-        payload = {"post_type": "message", "message_type": "private", "user_id": 2658495997}
+        payload = {"post_type": "message", "message_type": "private", "user_id": 20000002}
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         conn.request(
             "POST",
@@ -128,7 +128,7 @@ def test_accepts_napcat_style_x_signature(server: EventServer, events: list[dict
             headers={
                 "Content-Type": "application/json",
                 "Content-Length": str(len(raw)),
-                "x-self-id": "2157649443",
+                "x-self-id": "10000001",
                 "x-signature": sign(TOKEN, raw),
             },
         )
@@ -139,7 +139,7 @@ def test_accepts_napcat_style_x_signature(server: EventServer, events: list[dict
         conn.close()
 
     assert status == 200, "NapCat 的 x-signature 必须被接受，否则一条消息都收不到"
-    assert events and events[0]["user_id"] == 2658495997
+    assert events and events[0]["user_id"] == 20000002
 
 
 def test_rejects_wrong_signature(server: EventServer, events: list[dict]) -> None:
@@ -269,7 +269,7 @@ def test_accepts_chunked_body_with_signature(server: EventServer, events: list[d
         payload = {"post_type": "message", "marker": "chunked", "filler": "x" * 3000}
         raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         status, _body = post_chunked(
-            conn, raw, {"x-self-id": "2157649443", "x-signature": sign(TOKEN, raw)}
+            conn, raw, {"x-self-id": "10000001", "x-signature": sign(TOKEN, raw)}
         )
     finally:
         conn.close()

@@ -151,11 +151,11 @@ def test_detect_accounts(tmp_path: Path) -> None:
 
 
 def test_parse_account_stem() -> None:
-    assert netconfig.parse_account_stem("napcat_2157649443") == "2157649443"
-    assert netconfig.parse_account_stem("napcat_protocol_2157649443") == "2157649443"
+    assert netconfig.parse_account_stem("napcat_10000001") == "10000001"
+    assert netconfig.parse_account_stem("napcat_protocol_10000001") == "10000001"
     # napcat.json 是基础设置，必须排除
     assert netconfig.parse_account_stem("napcat") is None
-    assert netconfig.parse_account_stem("onebot11_2157649443") is None
+    assert netconfig.parse_account_stem("onebot11_10000001") is None
     assert netconfig.parse_account_stem("napcat_abc") is None
     assert netconfig.parse_account_stem("napcat_protocol") is None
 
@@ -284,7 +284,7 @@ def test_legacy_conflicting_client_is_removed(tmp_path: Path) -> None:
     """修复时要把同名的事件通道删掉，而不是留着继续覆盖服务端。"""
     config_dir = tmp_path / "napcat" / "config"
     config_dir.mkdir(parents=True)
-    path = config_dir / "onebot11_2157649443.json"
+    path = config_dir / "onebot11_10000001.json"
 
     legacy = {
         "network": {
@@ -306,7 +306,7 @@ def test_legacy_conflicting_client_is_removed(tmp_path: Path) -> None:
     path.write_text(json.dumps(legacy), encoding="utf-8")
 
     result = netconfig.ensure_network_config(
-        "2157649443", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
+        "10000001", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
     )
     assert result.changed is True
 
@@ -322,7 +322,7 @@ def test_unrelated_user_entries_are_left_alone(tmp_path: Path) -> None:
     """清理同名条目时不能误删用户自己配的无关通道。"""
     config_dir = tmp_path / "napcat" / "config"
     config_dir.mkdir(parents=True)
-    path = config_dir / "onebot11_2157649443.json"
+    path = config_dir / "onebot11_10000001.json"
     path.write_text(
         json.dumps(
             {
@@ -342,7 +342,7 @@ def test_unrelated_user_entries_are_left_alone(tmp_path: Path) -> None:
     )
 
     netconfig.ensure_network_config(
-        "2157649443", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
+        "10000001", port=3000, event_port=3001, token="t", napcat_dir=tmp_path
     )
 
     saved = json.loads(path.read_text(encoding="utf-8"))

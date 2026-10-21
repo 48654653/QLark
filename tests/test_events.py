@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from qlark.onebot.events import describe_event, make_session_id, parse_message_event
 
-BOT = "2157649443"
+BOT = "10000001"
 
 
 def group_payload(**overrides) -> dict:
