@@ -69,6 +69,7 @@
     stQQ: $('stQQ'), stNick: $('stNick'),
     stMsg: $('stMsg'), stSessions: $('stSessions'),
     stShape: $('stShape'), stShapeHint: $('stShapeHint'),
+    sideVersion: $('sideVersion'),
 
     rtPhaseTag: $('rtPhaseTag'), rtProc: $('rtProc'), rtPid: $('rtPid'),
     rtUptime: $('rtUptime'), rtOnebot: $('rtOnebot'), rtPhase: $('rtPhase'), rtEnv: $('rtEnv'),
@@ -5029,9 +5030,39 @@
   }
 
   /* ---------------- 启动 ---------------- */
+
+  /**
+   * 把每项底下的说明文字挪到 title 上。
+   *
+   * 说明默认是 display:none —— 二十个控件每个底下压一大段话，
+   * 页面上就是一团字，反而没人读。挪到 title 之后鼠标停上去照样能看到，
+   * 但页面只剩标签和控件，干净得多。
+   *
+   * `**加粗**` 这种标记在 tooltip 里没法渲染，直接去掉星号。
+   */
+  function hoistFieldHints() {
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.field-hint'),
+      function (hint) {
+        var field = hint.closest ? hint.closest('.field') : null;
+        if (!field || field.title) return;
+        var text = (hint.textContent || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+        if (text) field.title = text;
+      }
+    );
+  }
+
   function boot() {
     initTheme();
+    hoistFieldHints();
     bind();
+
+    // 侧栏显示真实版本号（写死的话每次发版都会忘）
+    apiCall('get_app_info').then(function (info) {
+      if (info && info.version) {
+        setText(dom.sideVersion, 'QLark ' + (info.name_cn || '') + ' · v' + info.version);
+      }
+    }, function () { /* 拿不到就保留静态文案 */ });
 
     var savedPage = null;
     try { savedPage = localStorage.getItem('qlark.page'); } catch (e) { savedPage = null; }

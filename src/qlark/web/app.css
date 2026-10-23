@@ -1106,8 +1106,12 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
 /* ---------- 表单栅格 ---------- */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 14px 18px;
+  /* 自适应列数，但**每列等宽**（1fr）。
+     以前是 minmax(260px, 1fr)：容器宽的时候列会被拉得很宽，
+     和旁边一列对不齐，看起来就没章法。用 min() 兜住窄容器，
+     人设页那种侧栏里会自动减到两列，不会挤成一团。 */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 16px 20px;
   padding: 14px 0 4px;
 }
 .field {
@@ -1117,6 +1121,32 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
   min-width: 0;
 }
 .field.span2 { grid-column: 1 / -1; }
+/* 整行占满（例如多行文本框） */
+.field.span3 { grid-column: 1 / -1; }
+
+/* ---- 分组：把一大堆控件按功能收进小卡片 ---- */
+.field-groups {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+.field-group {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px 14px;
+  background: var(--bg-sunken);
+}
+.field-group-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+.field-group .form-grid {
+  padding: 12px 0 0;
+  gap: 14px 20px;
+}
 
 .field-label {
   display: flex;
@@ -1134,11 +1164,19 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
 }
 
 .field-hint {
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--text-faint);
+  /* 说明文字**默认不显示**。
+     页面上只留标签和控件 —— 二十个控件每个底下压一大段话，
+     看起来就是一团字，反而没人读。
+     内容会在启动时挪到所在项的 title 上，鼠标停上去照样能看到。 */
+  display: none;
 }
-.field-hint .mono { font-family: var(--font-mono); }
+
+/* 面板标题右侧 / 底部那些一句话说明，同理收起来。
+   它们是"这个面板怎么用"的注释，看一次就够了，不该占常住空间。 */
+.head-hint,
+.foot-hint {
+  display: none;
+}
 
 /* 输入框 + 按钮同一行（例如「表情包目录」+「浏览…」） */
 .row-inline {

@@ -132,7 +132,7 @@
         <span id="sideStatusText">未登录</span>
         <span class="side-paused" id="sidePaused" hidden>· 已暂停</span>
       </div>
-      <div class="side-version">QLark · QQ 聊天机器人</div>
+      <div class="side-version" id="sideVersion">QLark · QQ 聊天机器人</div>
     </div>
   </aside>
 
@@ -435,179 +435,190 @@
         <section class="card panel">
           <div class="panel-head">
             <h2 class="panel-title">对话行为</h2>
-            <span class="tag">随「应用」一起提交</span>
-            <span class="spacer"></span>
-            <span class="head-hint">即时生效，不需要重启 NapCat</span>
           </div>
 
-          <div class="form-grid">
-            <label class="field">
-              <span class="field-label">记忆轮数</span>
-              <input class="input" id="bMemoryRounds" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="20">
-              
-              <span class="field-err" id="eMemoryRounds" hidden></span>
-            </label>
+          <div class="field-groups">
 
-            <label class="field">
-              <span class="field-label">单条回复最大字数</span>
-              <input class="input" id="bMaxReplyChars" type="number" min="20" max="5000" step="10" inputmode="numeric" placeholder="500">
-              <span class="field-hint">超出部分截断，避免刷屏</span>
-              <span class="field-err" id="eMaxReplyChars" hidden></span>
-            </label>
-
-            <div class="field">
-              <span class="field-label">群聊引用原消息</span>
-              <label class="switch">
-                <input type="checkbox" id="bQuoteGroup">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">回复时引用被回复的消息</span>
-              </label>
-              <span class="field-hint">仅影响群聊，私聊不受影响。群里引用会让消息看着比较吵，默认关闭</span>
-            </div>
-
-            <div class="field">
-              <span class="field-label">消息带上昵称与时间</span>
-              <label class="switch">
-                <input type="checkbox" id="bMessageLabel">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">按「昵称：小明 / 时间：2026-9-25 17:00 / 消息：早上好」发送</span>
-              </label>
-              <span class="field-hint">群聊里所有人共用一份记忆，不带昵称的话机器人分不清哪句是谁说的，会把 A 的偏好记到 B 头上；时间让它知道「早上好」是几点的早上好。群聊和私聊都生效</span>
-            </div>
-
-            <div class="field">
-              <span class="field-label">表情包目录</span>
-              <div class="row-inline">
-                <input class="input" id="bMemeDir" type="text" spellcheck="false" autocomplete="off" placeholder="留空 = 程序目录下的 memes 文件夹">
-                <button class="btn" id="btnMemeDirBrowse" type="button">浏览…</button>
+            <section class="field-group">
+              <h3 class="field-group-title">对话节奏</h3>
+              <div class="form-grid">
+                <label class="field">
+                  <span class="field-label">记忆轮数</span>
+                  <input class="input" id="bMemoryRounds" type="number" min="1" max="200" step="1" inputmode="numeric" placeholder="20">
+                  <span class="field-err" id="eMemoryRounds" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">单条回复最大字数</span>
+                  <input class="input" id="bMaxReplyChars" type="number" min="20" max="5000" step="10" inputmode="numeric" placeholder="500">
+                  <span class="field-hint">超出部分截断，避免刷屏</span>
+                  <span class="field-err" id="eMaxReplyChars" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">每分钟回复上限</span>
+                  <input class="input" id="bRateLimit" type="number" min="0" max="600" step="1" inputmode="numeric" placeholder="0">
+                  <span class="field-hint">单个会话每分钟最多回复几条；0 = 不限制。QQ 对高频回复很敏感，建议保留限制</span>
+                  <span class="field-err" id="eRateLimit" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">多条之间的间隔（毫秒）</span>
+                  <input class="input" id="bSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
+                  <span class="field-err" id="eSplitDelay" hidden></span>
+                </label>
               </div>
-              <span class="field-hint" id="memeDirHint">散放「生气.png」这种文件即可，文件名就是情绪；也可以建子文件夹，一个情绪放多张时会随机挑一张</span>
-              <span class="field-err" id="eMemeDir" hidden></span>
-            </div>
+            </section>
 
-            <div class="field">
-              <span class="field-label">回复判断表</span>
-              <label class="switch">
-                <input type="checkbox" id="bReplyRubric">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">让机器人按情境判断该回多长</span>
-              </label>
-              <span class="field-hint">**不是掷骰子，是让模型自己看情境**：打招呼就简短回，问事实就直答，对方在情绪里就认真回、不许敷衍，开玩笑就只接一个梗。同时约束「一次只说一件事、不超过三句」</span>
-            </div>
+            <section class="field-group">
+              <h3 class="field-group-title">回复形态</h3>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">回复判断表</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bReplyRubric">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">按情境判断该回多长</span>
+                  </label>
+                  <span class="field-hint">不是掷骰子，是让模型自己看情境：打招呼就简短回，问事实就直答，对方在情绪里就认真回，开玩笑就只接一个梗</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">一次最多几条</span>
+                  <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="3">
+                  <span class="field-hint">分不分段由模型自己判断，这里是上限 —— 防止它一次发十条刷屏</span>
+                  <span class="field-err" id="eSplitMax" hidden></span>
+                </label>
+                <div class="field">
+                  <span class="field-label">表情包目录</span>
+                  <div class="row-inline">
+                    <input class="input" id="bMemeDir" type="text" spellcheck="false" autocomplete="off" placeholder="留空 = 程序目录下的 memes">
+                    <button class="btn" id="btnMemeDirBrowse" type="button">浏览…</button>
+                  </div>
+                  <span class="field-hint" id="memeDirHint">散放「生气.png」这种文件即可，文件名就是情绪；也可以建子文件夹</span>
+                  <span class="field-err" id="eMemeDir" hidden></span>
+                </div>
+              </div>
+            </section>
 
-            <div class="field">
-              <span class="field-label">@ 激活保活</span>
-              <label class="switch">
-                <input type="checkbox" id="bKeepaliveEnabled">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">@ 一次之后，一段时间内不用再 @</span>
-              </label>
-              <span class="field-hint">**只对被 @ 的那个人有效**：别人说话既不能给他续期，也不能蹭用他的窗口 —— 否则群里一直有人说话，窗口就永远不关，机器人会变成每句都插嘴</span>
-            </div>
+            <section class="field-group">
+              <h3 class="field-group-title">免 @ 接话</h3>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">@ 激活保活</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bKeepaliveEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">@ 一次之后，一段时间内不用再 @</span>
+                  </label>
+                  <span class="field-hint">只对被 @ 的那个人有效：别人说话既不能给他续期，也不能蹭用他的窗口</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">保活时长（秒）</span>
+                  <input class="input" id="bKeepaliveSeconds" type="number" min="5" max="600" step="5" inputmode="numeric" placeholder="60">
+                  <span class="field-hint">他每说一句话都会刷新这个时长；静默满这么久，窗口自动关闭</span>
+                  <span class="field-err" id="eKeepaliveSeconds" hidden></span>
+                </label>
+                <div class="field">
+                  <span class="field-label">合并连发消息</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bCoalesceEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">连着的几条合成一条再回</span>
+                  </label>
+                  <span class="field-hint">有人习惯把一句话拆成好几条发。只对免@ 的消息生效，@ 了还是立刻回</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">静默多久算说完（秒）</span>
+                  <input class="input" id="bCoalesceQuiet" type="number" min="1" max="30" step="1" inputmode="numeric" placeholder="3">
+                  <span class="field-hint">对方停下这么久就把这一批发出去；每来一条会重新计时</span>
+                  <span class="field-err" id="eCoalesceQuiet" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">最长等多久（秒）</span>
+                  <input class="input" id="bCoalesceMax" type="number" min="3" max="120" step="1" inputmode="numeric" placeholder="15">
+                  <span class="field-hint">从第一条算起的硬上限，防止对方一直打字机器人永远不吭声</span>
+                  <span class="field-err" id="eCoalesceMax" hidden></span>
+                </label>
+              </div>
+            </section>
 
-            <label class="field">
-              <span class="field-label">保活时长（秒）</span>
-              <input class="input" id="bKeepaliveSeconds" type="number" min="5" max="600" step="5" inputmode="numeric" placeholder="60">
-              <span class="field-hint">他每说一句话都会刷新这个时长；静默满这么久，窗口自动关闭</span>
-              <span class="field-err" id="eKeepaliveSeconds" hidden></span>
-            </label>
+            <section class="field-group">
+              <h3 class="field-group-title">语音回复</h3>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">语音回复</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bVoiceEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">允许机器人发语音</span>
+                  </label>
+                  <span class="field-hint">要不要发由模型自己判断。还需要在「人设配置」里给角色勾上并写音色描述</span>
+                </div>
+                <label class="field">
+                  <span class="field-label">语音最长字数</span>
+                  <input class="input" id="bVoiceMaxChars" type="number" min="5" max="60" step="1" inputmode="numeric" placeholder="20">
+                  <span class="field-hint">超过就改发文字。实测 46 个字要念 21 秒，长语音没人愿意听</span>
+                  <span class="field-err" id="eVoiceMaxChars" hidden></span>
+                </label>
+                <label class="field">
+                  <span class="field-label">语音合成模型</span>
+                  <input class="input" id="bTtsModel" type="text" spellcheck="false" autocomplete="off" placeholder="mimo-v2.5-tts-voicedesign">
+                  <span class="field-hint">共用上面的 Base URL 和 Key，只是模型名不同</span>
+                  <span class="field-err" id="eTtsModel" hidden></span>
+                </label>
+              </div>
+            </section>
 
-            <div class="field">
-              <span class="field-label">引用消息</span>
-              <label class="switch">
-                <input type="checkbox" id="bQuoteContext">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">让机器人看到被引用的内容</span>
-              </label>
-              <span class="field-hint">别人引用一条消息再说话时，文字、图片、视频、转发的聊天记录都会取回来给它看。取不到（比如原消息被删了）就当作没有引用，不会卡住回复</span>
-            </div>
+            <section class="field-group">
+              <h3 class="field-group-title">消息格式</h3>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">消息带上昵称与时间</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bMessageLabel">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">按「昵称 / 时间 / 消息」三行发送</span>
+                  </label>
+                  <span class="field-hint">群聊里所有人共用一份记忆，不带昵称机器人分不清哪句是谁说的</span>
+                </div>
+                <div class="field">
+                  <span class="field-label">群聊引用原消息</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bQuoteGroup">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">回复时引用被回复的消息</span>
+                  </label>
+                  <span class="field-hint">仅影响群聊。群里引用会让消息看着比较吵，默认关闭</span>
+                </div>
+                <div class="field">
+                  <span class="field-label">引用消息</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bQuoteContext">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">让机器人看到被引用的内容</span>
+                  </label>
+                  <span class="field-hint">文字、图片、视频、转发的聊天记录都会取回来看。取不到就当作没有引用</span>
+                </div>
+              </div>
+            </section>
 
-            <div class="field">
-              <span class="field-label">合并连发消息</span>
-              <label class="switch">
-                <input type="checkbox" id="bCoalesceEnabled">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">把连着的几条合成一条再回</span>
-              </label>
-              <span class="field-hint">有人习惯把一句话拆成好几条发（"在" "吗" "问个事"）。每条都回会变成「咋了 / 嗯？ / 说」三连，一眼是机器人。**只对免@ 的消息生效**，@ 了还是立刻回</span>
-            </div>
-
-            <div class="row-2">
-              <label class="field">
-                <span class="field-label">静默多久算说完（秒）</span>
-                <input class="input" id="bCoalesceQuiet" type="number" min="1" max="30" step="1" inputmode="numeric" placeholder="3">
-                <span class="field-hint">对方停下这么久就把这一批发出去。**每来一条会重新计时**</span>
-                <span class="field-err" id="eCoalesceQuiet" hidden></span>
-              </label>
-              <label class="field">
-                <span class="field-label">最长等多久（秒）</span>
-                <input class="input" id="bCoalesceMax" type="number" min="3" max="120" step="1" inputmode="numeric" placeholder="15">
-                <span class="field-hint">从第一条算起的硬上限。防止对方一直打字，机器人永远不吭声</span>
-                <span class="field-err" id="eCoalesceMax" hidden></span>
-              </label>
-            </div>
-
-            <div class="field">
-              <span class="field-label">语音回复</span>
-              <label class="switch">
-                <input type="checkbox" id="bVoiceEnabled">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">允许机器人发语音</span>
-              </label>
-              <span class="field-hint">**要不要发由模型自己判断**，没有概率。只有很短、而且用声音说出来更自然的那几句才会走语音。还需要在「人设配置」里给角色勾上并写音色描述</span>
-            </div>
-
-            <label class="field">
-              <span class="field-label">语音最长字数</span>
-              <input class="input" id="bVoiceMaxChars" type="number" min="5" max="60" step="1" inputmode="numeric" placeholder="20">
-              <span class="field-hint">超过就改发文字。实测 46 个字要念 21 秒，长语音没人愿意听</span>
-              <span class="field-err" id="eVoiceMaxChars" hidden></span>
-            </label>
-
-            <label class="field">
-              <span class="field-label">语音合成模型</span>
-              <input class="input" id="bTtsModel" type="text" spellcheck="false" autocomplete="off" placeholder="mimo-v2.5-tts-voicedesign">
-              <span class="field-hint">**共用上面的 Base URL 和 Key**，只是模型名不同</span>
-              <span class="field-err" id="eTtsModel" hidden></span>
-            </label>
-
-            <label class="field">
-              <span class="field-label">一次最多几条</span>
-              <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="3">
-              <span class="field-hint">模型自己决定分不分段，这里是**上限** —— 防止它一次发十条刷屏</span>
-              <span class="field-err" id="eSplitMax" hidden></span>
-            </label>
-
-            <label class="field">
-              <span class="field-label">多条之间的间隔（毫秒）</span>
-              <input class="input" id="bSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
-              
-              <span class="field-err" id="eSplitDelay" hidden></span>
-            </label>
-
-            <div class="field">
-              <span class="field-label">私聊出错时告知原因</span>
-              <label class="switch">
-                <input type="checkbox" id="bErrorNotice">
-                <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">调用失败时回复错误原因</span>
-              </label>
-              <span class="field-hint">关闭后只写日志，不向对方回复</span>
-            </div>
-
-            <label class="field">
-              <span class="field-label">每分钟回复上限</span>
-              <input class="input" id="bRateLimit" type="number" min="0" max="600" step="1" inputmode="numeric" placeholder="0">
-              <span class="field-hint">单个会话每分钟最多回复几条；0 = 不限制。QQ 对高频回复很敏感，建议保留限制</span>
-              <span class="field-err" id="eRateLimit" hidden></span>
-            </label>
-
-            <label class="field span2">
-              <span class="field-label">屏蔽词<span class="field-count" id="bBlockedWordsCount">0 个</span></span>
-              <textarea class="textarea mono" id="bBlockedWords" rows="4" spellcheck="false" placeholder="每行一个词"></textarea>
-              <span class="field-hint">命中这些词的<strong>消息会被直接忽略</strong>（不会回复）。留空 = 不启用</span>
-              <span class="field-err" id="eBlockedWords" hidden></span>
-            </label>
+            <section class="field-group">
+              <h3 class="field-group-title">安全与通知</h3>
+              <div class="form-grid">
+                <div class="field">
+                  <span class="field-label">私聊出错时告知原因</span>
+                  <label class="switch">
+                    <input type="checkbox" id="bErrorNotice">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">调用失败时回复错误原因</span>
+                  </label>
+                  <span class="field-hint">关闭后只写日志，不向对方回复</span>
+                </div>
+                <label class="field span3">
+                  <span class="field-label">屏蔽词<span class="field-count" id="bBlockedWordsCount">0 个</span></span>
+                  <textarea class="textarea mono" id="bBlockedWords" rows="3" spellcheck="false" placeholder="每行一个词，留空 = 不启用"></textarea>
+                  <span class="field-hint">命中这些词的消息会被直接忽略</span>
+                  <span class="field-err" id="eBlockedWords" hidden></span>
+                </label>
+              </div>
+            </section>
           </div>
 
           <div class="panel-foot">

@@ -1,6 +1,6 @@
 [project]
 name = "qlark"
-version = "1.0.0"
+version = "2.2.0"
 description = "QLark（云雀）—— 基于 NapCat 的 QQ 聊天机器人 Windows 桌面客户端"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 APP_NAME = "QLark"
 APP_NAME_CN = "云雀"
-__version__ = "1.0.0"
+__version__ = "2.2.0"
 __build__ = "m1"
 
 WINDOW_TITLE = f"{APP_NAME} {APP_NAME_CN} · v{__version__}"
