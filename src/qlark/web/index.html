@@ -663,96 +663,102 @@
             <div class="persona-placeholder" id="personaEmpty">请从左侧选择一个人设</div>
 
             <div id="personaEditor" hidden>
-              <div class="form-grid">
-                <label class="field span2">
-                  <span class="field-label">名称</span>
-                  <input class="input" id="pName" type="text" maxlength="40" placeholder="例如：米蛋" spellcheck="false" autocomplete="off">
-                  <span class="field-err" id="ePName" hidden></span>
-                </label>
+<div class="field-groups">
 
-                <label class="field span2">
-                  <span class="field-label">系统提示词<span class="field-count" id="pPromptCount">0 字</span></span>
-                  <textarea class="textarea mono" id="pPrompt" rows="10" spellcheck="false" placeholder="你是……（描述性格、称呼、说话风格与边界）"></textarea>
-                  <span class="field-err" id="ePrompt" hidden></span>
-                </label>
+                <section class="field-group">
+                  <h3 class="field-group-title">角色</h3>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span class="field-label">名称</span>
+                      <input class="input" id="pName" type="text" maxlength="40" placeholder="例如：米蛋" spellcheck="false" autocomplete="off">
+                      <span class="field-err" id="ePName" hidden></span>
+                    </label>
+                    <div class="field">
+                      <span class="field-label">启用</span>
+                      <label class="switch">
+                        <input type="checkbox" id="pEnabled">
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-text">参与切换</span>
+                      </label>
+                    </div>
+                    <label class="field span3">
+                      <span class="field-label">系统提示词<span class="field-count" id="pPromptCount">0 字</span></span>
+                      <textarea class="textarea mono" id="pPrompt" rows="10" spellcheck="false" placeholder="你是……（描述性格、称呼、说话风格与边界）"></textarea>
+                      <span class="field-err" id="ePrompt" hidden></span>
+                    </label>
+                  </div>
+                </section>
 
-                <div class="field">
-                  <span class="field-label">启用</span>
-                  <label class="switch">
-                    <input type="checkbox" id="pEnabled">
-                    <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text">参与 /person 切换</span>
-                  </label>
-                  
-                </div>
+                <section class="field-group">
+                  <h3 class="field-group-title">能力</h3>
+                  <div class="form-grid">
+                    <div class="field">
+                      <span class="field-label">多段连发</span>
+                      <label class="switch">
+                        <input type="checkbox" id="pSplitEnabled">
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-text">允许多段连发</span>
+                      </label>
+                      <span class="field-hint">分不分由模型自己判断，最多发「对话行为」里那个条数上限</span>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">表情包</span>
+                      <label class="switch">
+                        <input type="checkbox" id="pMemeEnabled">
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-text">允许发送表情包</span>
+                      </label>
+                      <span class="field-hint">配不配由模型自己判断。表情图取自「对话行为」里配置的目录</span>
+                    </div>
+                    <div class="field">
+                      <span class="field-label">语音回复</span>
+                      <label class="switch">
+                        <input type="checkbox" id="pVoiceEnabled">
+                        <span class="switch-track"><span class="switch-thumb"></span></span>
+                        <span class="switch-text">允许这个角色发语音</span>
+                      </label>
+                      <span class="field-hint">还需要在「对话行为」里打开语音总开关</span>
+                    </div>
+                    <label class="field">
+                      <span class="field-label">多段连发间隔（毫秒）</span>
+                      <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="留空 = 跟随全局">
+                      <span class="field-hint">留空 = 跟随全局，填了就会覆盖全局</span>
+                      <span class="field-err" id="ePSplitDelay" hidden></span>
+                    </label>
+                    <label class="field span3">
+                      <span class="field-label">音色描述</span>
+                      <textarea class="input" id="pVoicePrompt" rows="3" spellcheck="false" placeholder="留空 = 用全局默认音色"></textarea>
+                      <span class="field-hint">决定她听起来是什么声音。写「小女孩、奶气、轻快」会往稚嫩走；写「慢半拍、慵懒」会变成成熟御姐，实测差别很大</span>
+                      <span class="field-err" id="ePVoicePrompt" hidden></span>
+                    </label>
+                  </div>
+                </section>
 
-                <label class="field">
-                  <span class="field-label">模型覆盖（选填）</span>
-                  <input class="input" id="pModelOverride" type="text" placeholder="留空 = 用全局对话模型" spellcheck="false" autocomplete="off">
-                  <span class="field-err" id="ePModelOverride" hidden></span>
-                </label>
-
-                <label class="field">
-                  <span class="field-label">温度覆盖（选填）</span>
-                  <input class="input" id="pTempOverride" type="number" min="0" max="2" step="0.1" inputmode="decimal" placeholder="留空 = 用全局温度">
-                  <span class="field-err" id="ePTempOverride" hidden></span>
-                </label>
-
-                <label class="field">
-                  <span class="field-label">最大 Token 覆盖（选填）</span>
-                  <input class="input" id="pTokensOverride" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="留空 = 用全局上限">
-                  <span class="field-err" id="ePTokensOverride" hidden></span>
-                </label>
-
-                <div class="field">
-                  <span class="field-label">多段连发</span>
-                  <label class="switch">
-                    <input type="checkbox" id="pSplitEnabled">
-                    <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text">允许多段连发</span>
-                  </label>
-                  <span class="field-hint">勾上之后，模型才知道自己可以把一句话拆成几条发。**分不分由它自己判断**，最多发「模型配置」里那个条数上限</span>
-                </div>
-
-                <div class="field">
-                  <span class="field-label">表情包</span>
-                  <label class="switch">
-                    <input type="checkbox" id="pMemeEnabled">
-                    <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text">允许发送表情包</span>
-                  </label>
-                  <span class="field-hint">勾上之后模型就能在回复里配表情，**配不配由它自己判断**。表情图取自「模型配置 → 对话行为」里配置的目录</span>
-                </div>
-
-                <div class="field">
-                  <span class="field-label">语音回复</span>
-                  <label class="switch">
-                    <input type="checkbox" id="pVoiceEnabled">
-                    <span class="switch-track"><span class="switch-thumb"></span></span>
-                    <span class="switch-text">允许这个角色发语音</span>
-                  </label>
-                  <span class="field-hint">还需要在「模型配置 → 对话行为」里打开总开关。**要不要发由模型自己判断**，只有很短、用声音说出来更自然的那几句才会走语音</span>
-                </div>
-
-                <label class="field">
-                  <span class="field-label">音色描述</span>
-                  <textarea class="input" id="pVoicePrompt" rows="4" spellcheck="false" placeholder="留空 = 用全局默认音色"></textarea>
-                  <span class="field-hint">这段决定她听起来是什么声音。写"小女孩、奶气、轻快"会往稚嫩走；写"慢半拍、慵懒"会变成成熟御姐 —— 实测差别很大</span>
-                  <span class="field-err" id="ePVoicePrompt" hidden></span>
-                </label>
-
-                <label class="field">
-                  <span class="field-label">多段连发间隔（毫秒）</span>
-                  <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
-                  <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
-                  <span class="field-err" id="ePSplitDelay" hidden></span>
-                </label>
-
-                <div class="field">
-                  <span class="field-label">总体预览</span>
-                  <button class="btn" id="btnPersonaPromptEdit" type="button">看看即将发给 AI 的全部内容</button>
-                  <span class="field-hint">人设提示词、【输出规则】、判断表、示例消息按真实顺序列出来</span>
-                </div>
+                <section class="field-group">
+                  <h3 class="field-group-title">高级（可选）</h3>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span class="field-label">模型覆盖</span>
+                      <input class="input" id="pModelOverride" type="text" placeholder="留空 = 用全局对话模型" spellcheck="false" autocomplete="off">
+                      <span class="field-err" id="ePModelOverride" hidden></span>
+                    </label>
+                    <label class="field">
+                      <span class="field-label">温度覆盖</span>
+                      <input class="input" id="pTempOverride" type="number" min="0" max="2" step="0.1" inputmode="decimal" placeholder="留空 = 用全局温度">
+                      <span class="field-err" id="ePTempOverride" hidden></span>
+                    </label>
+                    <label class="field">
+                      <span class="field-label">最大 Token 覆盖</span>
+                      <input class="input" id="pTokensOverride" type="number" min="1" max="32000" step="1" inputmode="numeric" placeholder="留空 = 用全局上限">
+                      <span class="field-err" id="ePTokensOverride" hidden></span>
+                    </label>
+                    <div class="field span3">
+                      <span class="field-label">总体预览</span>
+                      <button class="btn" id="btnPersonaPromptEdit" type="button">看看即将发给 AI 的全部内容</button>
+                      <span class="field-hint">人设提示词、【输出规则】、判断表、示例消息按真实顺序列出来</span>
+                    </div>
+                  </div>
+                </section>
               </div>
 
               <div class="panel-foot">

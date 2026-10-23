@@ -1163,11 +1163,14 @@ mark.hl { background: var(--warn); background: color-mix(in srgb, var(--warn) 45
   font-variant-numeric: tabular-nums;
 }
 
-.field-hint {
+.field-hint:not([id]) {
   /* 说明文字**默认不显示**。
      页面上只留标签和控件 —— 二十个控件每个底下压一大段话，
      看起来就是一团字，反而没人读。
-     内容会在启动时挪到所在项的 title 上，鼠标停上去照样能看到。 */
+     内容会在启动时挪到所在项的 title 上，鼠标停上去照样能看到。
+
+     注意 `:not([id])`：带 id 的那几个（消息条数、识别到的情绪、
+     预览加载状态）是**动态状态**不是固定说明，必须一直看得见。 */
   display: none;
 }
 

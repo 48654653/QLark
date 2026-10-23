@@ -5044,6 +5044,9 @@
     Array.prototype.forEach.call(
       document.querySelectorAll('.field-hint'),
       function (hint) {
+        // 带 id 的是动态状态（消息条数 / 识别到的情绪 / 预览加载状态），
+        // 它们本来就一直显示，不该被当成说明收起来
+        if (hint.id) return;
         var field = hint.closest ? hint.closest('.field') : null;
         if (!field || field.title) return;
         var text = (hint.textContent || '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
