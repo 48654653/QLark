@@ -68,6 +68,7 @@
     stOnlineDot: $('stOnlineDot'), stOnline: $('stOnline'), stOnlineHint: $('stOnlineHint'),
     stQQ: $('stQQ'), stNick: $('stNick'),
     stMsg: $('stMsg'), stSessions: $('stSessions'),
+    stShape: $('stShape'), stShapeHint: $('stShapeHint'),
 
     rtPhaseTag: $('rtPhaseTag'), rtProc: $('rtProc'), rtPid: $('rtPid'),
     rtUptime: $('rtUptime'), rtOnebot: $('rtOnebot'), rtPhase: $('rtPhase'), rtEnv: $('rtEnv'),
@@ -539,6 +540,35 @@
     setText(dom.stNick, '昵称 ' + (st.nickname || '—'));
     setText(dom.stMsg, fmtNum(s.msg_in) + ' / ' + fmtNum(s.msg_out));
     setText(dom.stSessions, fmtNum(s.active_sessions));
+    // 回复形态的计数在 pipeline 的 snapshot 里（st.bot），不在 db 的今日统计里
+    renderReplyShape(st.bot || {});
+  }
+
+  /**
+   * 「回复形态」卡片：配表情 / 语音 / 分段各占多少。
+   *
+   * 骰子删掉之后，频率由模型自己决定 —— **只能靠这三个数看它是不是过密**。
+   * 表情使用率经常过半，就说明提示词里"别每次都配"没起作用。
+   */
+  function renderReplyShape(bot) {
+    var replied = numOr(bot.replied, 0);
+    var memes = numOr(bot.memes, 0);
+    var voices = numOr(bot.voices, 0);
+    var splits = numOr(bot.splits, 0);
+    if (!replied) {
+      setText(dom.stShape, '—');
+      setText(dom.stShapeHint, '还没有回复');
+      return;
+    }
+    var rate = function (value) {
+      return Math.round((value / replied) * 100) + '%';
+    };
+    setText(dom.stShape, rate(memes) + ' / ' + rate(voices) + ' / ' + rate(splits));
+    setText(
+      dom.stShapeHint,
+      '配表情 ' + fmtNum(memes) + ' · 语音 ' + fmtNum(voices) + ' · 分段 ' + fmtNum(splits) +
+        '（共 ' + fmtNum(replied) + ' 条回复）'
+    );
   }
 
   function renderRuntime(st) {

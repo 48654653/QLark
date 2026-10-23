@@ -232,6 +232,12 @@ class PipelineStats:
             "vision_fallbacks": self.vision_fallbacks,
             "blocked": self.blocked,
             "rate_limited": self.rate_limited,
+            # v2：模型自主决定的三种形态用了几次。**没有骰子之后，
+            # 频率是否过密只能靠这三个数看** —— 太高就调提示词。
+            "voices": self.voices,
+            "memes": self.memes,
+            "splits": self.splits,
+            "voice_fallbacks": self.voice_fallbacks,
             "last_error": self.last_error,
             "last_reply_at": self.last_reply_at,
         }
@@ -271,7 +277,12 @@ class MessagePipeline:
             complete=self._summarize_call,
             logbus=logbus,
         )
-        self._images = ImagePreparer()
+        #: 图片预处理：长边缩到 `image_max_side`（默认 512）。
+        #:
+        #: 实测 token ≈ 像素数 ÷ 1024：
+        #:   512px → 258 token    1024px → 1026 token    2048px → 4098 token
+        #: QQ 聊天里 512px 足够看清，没必要为清晰度多付四倍。
+        self._images = ImagePreparer(max_side=self._setting_int("image_max_side", 512))
         self._rate_limiter: RateLimiter | None = None
 
         self._paused = settings.bot_paused

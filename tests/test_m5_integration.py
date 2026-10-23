@@ -105,15 +105,20 @@ def test_image_is_downloaded_and_sent_to_vision_model(vision_ready, fake_openai:
     data_url = parts[kinds.index("image_url")]["image_url"]["url"]
     assert data_url.startswith("data:image/jpeg;base64,"), data_url[:60]
 
-    # 3) 图片被缩放到长边 ≤ 1024（样例图是 1200x800）
+    # 3) 图片被缩放到长边 = image_max_side（默认 512）
+    #
+    # v2 把默认从 1024 降到 512：实测 token ≈ 像素数 ÷ 1024，
+    # 512px 约 258 token，1024px 约 1026 token —— QQ 聊天里 512 够看清了。
+    # 样例图是 1200x800。
     import base64
     import io
 
     from PIL import Image
 
+    expected = int(vision_ready.settings.get("image_max_side") or 512)
     raw = base64.b64decode(data_url.split(",", 1)[1])
     with Image.open(io.BytesIO(raw)) as image:
-        assert max(image.size) == 1024, f"没有缩放到 1024：{image.size}"
+        assert max(image.size) == expected, f"没有缩放到 {expected}：{image.size}"
 
 
 def test_image_message_gets_a_reply(vision_ready, fake_openai: FakeOpenAI) -> None:
