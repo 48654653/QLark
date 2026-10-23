@@ -214,6 +214,10 @@ def test_pipeline_puts_quoted_text_into_the_prompt(ready, fake_openai: FakeOpenA
         lambda: (ready.bot.pipeline._quoted_fetcher.ids), timeout=30
     ), "应该去取引用内容"
 
+    # 「取到引用」不等于「请求已发出」—— 取回之后才组装消息、才调模型。
+    # 直接读 requests()[-1] 会偶发 IndexError，必须等请求真的到。
+    assert wait_for(lambda: fake_openai.requests(), timeout=30), "应该调用模型"
+
     content = _user_content(fake_openai.requests()[-1])
     assert "【引用了这条消息】今晚吃白米饭" in content
     assert "你看这句" in content
