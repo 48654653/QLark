@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Iterable
@@ -129,18 +130,28 @@ class MessageStore:
         content: str,
         *,
         has_image: bool = False,
+        media: Iterable[str] | None = None,
         tokens: int = 0,
         msg_id: str | None = None,
         created_at: int | None = None,
     ) -> int:
+        """写一条记忆。
+
+        Args:
+            media: 这一条附带的图片**文件名**（不是完整路径，也不是 base64）。
+                图片本身落在 ``<用户数据目录>/media/``，这里只记名字，
+                上下文组装时按需读回来 —— **绝不能把 base64 写进数据库**。
+        """
+        names = [str(name) for name in (media or []) if name]
         self._db.execute(
-            "INSERT INTO messages(memory_key, role, content, has_image, tokens, msg_id, created_at, summarized) "
-            "VALUES(?, ?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO messages(memory_key, role, content, has_image, media, tokens, "
+            "msg_id, created_at, summarized) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (
                 key,
                 role,
                 content,
                 1 if has_image else 0,
+                json.dumps(names, ensure_ascii=False) if names else None,
                 int(tokens),
                 msg_id,
                 int(created_at if created_at is not None else time.time()),
@@ -158,6 +169,45 @@ class MessageStore:
             (key, int(rounds) * 2),
         )
         return [(str(row["role"]), str(row["content"])) for row in reversed(rows)]
+
+    def recent_rounds_with_media(
+        self, key: str, rounds: int, media_rounds: int = 0
+    ) -> list[tuple[str, str, list[str]]]:
+        """同 :meth:`recent_rounds`，但**带上最近 ``media_rounds`` 轮的图片文件名**。
+
+        v2 的做法：记忆里不再靠 ``[图片]`` 占位符表示"这里有过一张图"，
+        而是把**真实的图**放回上下文。但历史全都带上图会让每轮请求都重发一遍
+        （一张 512px 约 258 token），所以只回溯最近几轮 —— 更早的变成纯文本
+        （占位符会被调用方去掉，不会留下"这里曾经有图"的空壳）。
+
+        Returns:
+            ``[(role, content, [文件名, ...])]``，按时间正序；没有图的条目是空列表。
+        """
+        if rounds <= 0:
+            return []
+        rows = self._db.query(
+            "SELECT role, content, media FROM messages WHERE memory_key = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (key, int(rounds) * 2),
+        )
+        ordered = list(reversed(rows))
+        # 最近 media_rounds 轮 = 最后 media_rounds*2 条
+        keep_from = max(0, len(ordered) - max(0, int(media_rounds)) * 2)
+        out: list[tuple[str, str, list[str]]] = []
+        for index, row in enumerate(ordered):
+            media: list[str] = []
+            if index >= keep_from:
+                # sqlite3.Row 没有 .get()，用 keys() 判断列是否存在
+                raw = row["media"] if "media" in row.keys() else None
+                if raw:
+                    try:
+                        loaded = json.loads(str(raw))
+                        if isinstance(loaded, list):
+                            media = [str(name) for name in loaded if name]
+                    except ValueError:
+                        media = []
+            out.append((str(row["role"]), str(row["content"]), media))
+        return out
 
     def message_count(self, key: str) -> int:
         rows = self._db.query(

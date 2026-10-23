@@ -41,13 +41,15 @@ CREATE TABLE IF NOT EXISTS session_state (
 );
 
 -- ---------------------------------------------------------------- 记忆：原文
--- 只存触发了机器人的问答；图片以 [图片] 占位
+-- 只存触发了机器人的问答。图片本身落在 <用户数据目录>/media/，
+-- 这里只记文件名（media 列，JSON 数组）—— **绝不能把 base64 写进数据库**。
 CREATE TABLE IF NOT EXISTS messages (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   memory_key  TEXT    NOT NULL,           -- <session_id>:p<persona_uid>
   role        TEXT    NOT NULL,           -- user | assistant
   content     TEXT    NOT NULL,
   has_image   INTEGER DEFAULT 0,
+  media       TEXT    DEFAULT NULL,       -- JSON 数组：本条的图片文件名
   tokens      INTEGER DEFAULT 0,
   msg_id      TEXT,                       -- OneBot 消息 ID，用于去重
   created_at  INTEGER NOT NULL,

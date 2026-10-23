@@ -194,6 +194,16 @@ def thinking_payload(mode: str | None) -> dict[str, Any] | None:
     return THINKING_PAYLOADS.get(str(mode or "").strip().lower())
 
 
+def looks_like_json_mode_unsupported(status: int | None, body: str) -> bool:
+    """判断这次失败是不是"服务端不认 response_format"。"""
+    if status not in (400, 422):
+        return False
+    low = str(body or "").lower()
+    if "response_format" not in low and "json_object" not in low and "json mode" not in low:
+        return False
+    return any(hint in low for hint in _UNSUPPORTED_HINTS)
+
+
 def looks_like_thinking_unsupported(status: int | None, body: str) -> bool:
     """判断这次失败是不是"服务端不认 thinking 参数"。
 
@@ -221,6 +231,7 @@ class OpenAIChatClient:
         max_tokens: int | None = None,
         temperature: float | None = None,
         thinking: str | None = None,
+        json_mode: bool = False,
         session: requests.Session | None = None,
     ) -> None:
         self.base_url = base_url
@@ -232,6 +243,14 @@ class OpenAIChatClient:
         #: 思考强度（``off``/``auto``/``low``/``medium``/``high``/``max``）。
         #: 服务端明确表示不支持时会被就地清成 ``None``，之后不再发送。
         self.thinking = thinking
+        #: 要不要发 ``response_format: {"type": "json_object"}``。
+        #:
+        #: v2 起每次都要 JSON，这是双保险里的第一道（第二道是末尾的提醒）。
+        #: **但它是 OpenAI 专有字段的扩展语义**，各家兼容服务的表现不一样：
+        #:   · MiMo：支持，实测一次就对
+        #:   · DeepSeek：认这个字段，但**带历史时会返回空内容**（实测 0/8）
+        #: 所以下面加了两条自动降级：报错就关掉重试；返回空也关掉重试并记住。
+        self.json_mode = json_mode
         self._session = session or requests.Session()
 
     # ------------------------------------------------------------------ 校验
@@ -268,6 +287,8 @@ class OpenAIChatClient:
         extra = thinking_payload(self.thinking)
         if extra is not None:
             payload["thinking"] = extra
+        if self.json_mode:
+            payload["response_format"] = {"type": "json_object"}
 
         headers = {
             "Content-Type": "application/json",
@@ -275,19 +296,38 @@ class OpenAIChatClient:
         }
 
         try:
-            return self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+            result = self._request_loop(endpoint, payload, messages, headers, retries, backoff)
         except LLMError as exc:
             # 服务端不认 thinking 参数 → 去掉它再来一轮，并**记住**别再发。
             # `thinking` 不是 OpenAI 标准字段：DeepSeek 会静默忽略未知字段，
             # 但别的兼容服务可能直接 400/422，不能让整次调用就这么失败。
-            if "thinking" not in payload or not looks_like_thinking_unsupported(
+            if "thinking" in payload and looks_like_thinking_unsupported(exc.status, str(exc)):
+                log.warning("服务端不支持 thinking 参数，已自动去掉并重试一次：%s", exc)
+                payload.pop("thinking", None)
+                self.thinking = None
+                result = self._request_loop(
+                    endpoint, payload, messages, headers, retries, backoff
+                )
+            elif "response_format" in payload and looks_like_json_mode_unsupported(
                 exc.status, str(exc)
             ):
+                log.warning("服务端不支持 response_format，已自动去掉并重试一次：%s", exc)
+                payload.pop("response_format", None)
+                self.json_mode = False
+                result = self._request_loop(
+                    endpoint, payload, messages, headers, retries, backoff
+                )
+            else:
                 raise
-            log.warning("服务端不支持 thinking 参数，已自动去掉并重试一次：%s", exc)
-            payload.pop("thinking", None)
-            self.thinking = None
-            return self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+
+        # 有些服务**认这个字段但会返回空**（DeepSeek 带历史时实测 0/8）。
+        # 这种情况不报错，只能靠"空内容"识别：关掉它再问一次，然后记住别再用。
+        if self.json_mode and not str(result.text or "").strip():
+            log.warning("response_format 生效后返回空内容，关掉它重试一次")
+            payload.pop("response_format", None)
+            self.json_mode = False
+            result = self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+        return result
 
     def _request_loop(
         self,

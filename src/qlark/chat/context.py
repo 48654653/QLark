@@ -22,7 +22,7 @@ VALID_ROLES = frozenset({"system", "user", "assistant"})
 def build_chat_messages(
     *,
     system_prompt: str = "",
-    history: Iterable[tuple[str, str]] = (),
+    history: Iterable[tuple[Any, ...]] = (),
     user_content: str | list[dict[str, Any]],
     extra_system: Sequence[str] = (),
     trailing_system: str = "",
@@ -32,7 +32,9 @@ def build_chat_messages(
     Args:
         system_prompt: 人设提示词。**空串会整条跳过** —— 不能发一条空的 system，
             部分 OpenAI 兼容服务会因此报错。
-        history: ``(role, content)`` 序列，按时间正序。
+        history: 按时间正序的条目。每项是 ``(role, content)``，
+            ``content`` 可以是字符串，**也可以是已经拼好的多模态数组**
+            （v2 起历史里的真实图片就走这条）。
         user_content: 本轮用户消息。字符串，或已是多模态数组（M5 图片理解用）。
         extra_system: 额外插入的 system 块（M4 的长期记忆摘要走这里）。
         trailing_system: **插在历史之后、用户消息之前**的一条 system。
@@ -49,8 +51,15 @@ def build_chat_messages(
         # 合并成**一条** system：部分服务只接受第一条 system 消息
         messages.append({"role": "system", "content": "\n\n".join(blocks)})
 
-    for role, content in history:
+    for entry in history:
+        role = str(entry[0] or "")
+        content = entry[1] if len(entry) > 1 else ""
         if role not in VALID_ROLES or role == "system":
+            continue
+        if isinstance(content, list):
+            # 已经是多模态数组：至少要有内容才发
+            if content:
+                messages.append({"role": role, "content": content})
             continue
         text = str(content or "").strip()
         if not text:

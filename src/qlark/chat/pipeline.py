@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import base64
 import random
 import tempfile
 import threading
@@ -72,6 +73,13 @@ log = logging.getLogger(__name__)
 #: 而且 QQ 聊天本来就不需要把每种情绪都演一遍。
 VOICE_EMOTIONS = ("开心", "嫌弃")
 
+#: 一张图在上下文预算里折合多少"字符"。
+#:
+#: 实测 token ≈ 像素数 ÷ 1024：512px 约 258 token。按 4 字符 ≈ 1 token 折算，
+#: 约 1024 字符。**绝不能按 base64 长度算** —— 那有五万多字符，
+#: 一张图就能把整段历史挤掉。
+IMAGE_CHAR_COST = 1024
+
 #: 存进记忆的图片占位文本
 IMAGE_PLACEHOLDER = "[图片]"
 
@@ -130,6 +138,30 @@ class ReplyPlan:
         见 :func:`qlark.chat.reply_format.compose_memory_text` 里对"为什么"的说明。
         """
         return compose_memory_text(self.texts)
+
+
+def _content_cost(content: Any) -> int:
+    """估算一条 message 占多少"字符预算"。
+
+    **图片不能按 base64 长度算。** 一张 512px 的 JPEG base64 有五万多字符，
+    但实测只吃 258 token —— 按 base64 算的话，一张图就能把整段历史挤没，
+    表现是"明明带着图，请求里却一张都没有"（真踩过）。
+
+    这里给每张图固定折 1024 字符（约 256 token，和实测的 258 对齐）。
+    """
+    if isinstance(content, str):
+        return len(content)
+    if not isinstance(content, list):
+        return len(str(content or ""))
+    total = 0
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        if part.get("type") == "image_url":
+            total += IMAGE_CHAR_COST
+        else:
+            total += len(str(part.get("text") or ""))
+    return total
 
 
 def _strip_image_placeholders(text: str) -> str:
@@ -493,10 +525,12 @@ class MessagePipeline:
             return
 
         # 图片：**立即下载**（URL 约 2 小时过期，技术文档坑 17）。
-        # 记忆里始终只留 [图片] 占位，base64 绝不入库。
+        # base64 绝不入库；落盘只为了以后能把这张图放回上下文。
         prepared: list[PreparedImage] = []
+        media_names: list[str] = []
         if parsed.has_image:
             prepared = self._prepare_images(parsed)
+            media_names = self._save_media(prepared)
 
         if prepared:
             # 多模态：文本里那条 [图片] 占位要去掉，否则模型会看到"占位 + 真图"
@@ -547,8 +581,9 @@ class MessagePipeline:
         user_content = append_reminder(user_content)
         trailing_system = "\n\n".join(trailing_blocks)
 
-        # 先取历史，再调模型；确认成功后才把这一轮写进记忆
-        history = self.store.recent_rounds(key, rounds)
+        # 先取历史，再调模型；确认成功后才把这一轮写进记忆。
+        # v2：最近几轮的图片以**真身**放回上下文，更早的退化成纯文本。
+        history = self._history_for_context(key, rounds)
         system_prompt = self.store.persona_prompt(persona_uid)
         history = self._fit_budget(history, system_prompt, extra_system, user_content)
         messages = build_chat_messages(
@@ -612,7 +647,7 @@ class MessagePipeline:
         # 注意存的是 memory_text（只含 [图片] 占位），**绝不能把 base64 写进记忆**；
         # 机器人自己说的话存 plan.memory_text（自然文本 + [表情：x]），**不存 JSON**。
         self.store.append(
-            key, "user", memory_text, has_image=parsed.has_image,
+            key, "user", memory_text, has_image=parsed.has_image, media=media_names,
             msg_id=event.message_id, created_at=event.time or None,
         )
         self.store.append(
@@ -911,13 +946,90 @@ class MessagePipeline:
             value = DEFAULT_CONTEXT_BUDGET
         return max(2000, value)
 
+    def _media_dir(self) -> Path:
+        """聊天里收到过的图片存这里（只存文件名进数据库）。"""
+        return paths.data_dir() / "media"
+
+    def _save_media(self, prepared: list[PreparedImage]) -> list[str]:
+        """把本轮预处理好的图片落到磁盘，返回**文件名**列表。
+
+        为什么要落盘：v2 起历史里回放的是**真实的图**，而不是 ``[图片]`` 占位符。
+        数据库里只记文件名（base64 绝不入库），要用的时候再读回来。
+        """
+        names: list[str] = []
+        if not prepared:
+            return names
+        folder = self._media_dir()
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._log(f"图片目录创建失败，本轮图片不进记忆：{exc}", level="warn")
+            return names
+        for image in prepared:
+            try:
+                encoded = image.data_url.split(",", 1)[1]
+                raw = base64.b64decode(encoded)
+            except (IndexError, ValueError):
+                continue
+            name = f"{uuid.uuid4().hex}.jpg"
+            try:
+                (folder / name).write_bytes(raw)
+            except OSError as exc:
+                self._log(f"图片落盘失败，跳过：{exc}", level="warn")
+                continue
+            names.append(name)
+        return names
+
+    def _history_for_context(
+        self, key: str, rounds: int
+    ) -> list[tuple[str, Any]]:
+        """取历史；最近 ``media_history_rounds`` 轮的图片**以真身放回上下文**。
+
+        更早的轮次变成纯文本（``[图片]`` 占位符会被去掉，不留空壳）。
+        一张 512px 约 258 token，回溯两轮多花 500 左右，完全划得来。
+        """
+        keep = self._setting_int("media_history_rounds", 2)
+        rows = self.store.recent_rounds_with_media(key, rounds, media_rounds=keep)
+        out: list[tuple[str, Any]] = []
+        for role, content, names in rows:
+            parts: list[dict[str, Any]] = []
+            if names:
+                parts = self._media_parts(names)
+            text = _strip_image_placeholders(content).strip()
+            if not parts:
+                out.append((role, text))
+                continue
+            blocks: list[dict[str, Any]] = []
+            if text:
+                blocks.append({"type": "text", "text": text})
+            blocks.extend(parts)
+            out.append((role, blocks))
+        return out
+
+    def _media_parts(self, names: list[str]) -> list[dict[str, Any]]:
+        """按文件名读回图片，拼成 ``image_url`` 段。读不到就跳过（不报错）。"""
+        parts: list[dict[str, Any]] = []
+        folder = self._media_dir()
+        for name in names:
+            try:
+                raw = (folder / name).read_bytes()
+            except OSError:
+                continue
+            if not raw:
+                continue
+            encoded = base64.b64encode(raw).decode("ascii")
+            parts.append(
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
+            )
+        return parts
+
     def _fit_budget(
         self,
-        history: list[tuple[str, str]],
+        history: list[tuple[str, Any]],
         system_prompt: str,
         extra_system: list[str],
         user_content: str | list[dict[str, Any]],
-    ) -> list[tuple[str, str]]:
+    ) -> list[tuple[str, Any]]:
         """超出上下文预算时，**从最早的原文开始丢弃，长期记忆摘要始终保留**。
 
         需求规格 §6.3 的硬规则：宁可丢掉最早的寒暄，也不能丢掉被压缩过的
@@ -928,19 +1040,12 @@ class MessagePipeline:
         if isinstance(user_content, str):
             fixed += len(user_content)
         elif isinstance(user_content, list):
-            for part in user_content:
-                if not isinstance(part, dict):
-                    continue
-                if part.get("type") == "image_url":
-                    # 图片按 base64 的体积折算成本，否则一张大图会把历史全挤掉
-                    fixed += len(str((part.get("image_url") or {}).get("url") or ""))
-                else:
-                    fixed += len(str(part.get("text") or ""))
+            fixed += _content_cost(user_content)
 
-        kept: list[tuple[str, str]] = []
+        kept: list[tuple[str, Any]] = []
         used = fixed
         for role, content in reversed(history):
-            cost = len(str(content or "")) + 8
+            cost = _content_cost(content) + 8
             if kept and used + cost > budget:
                 break
             used += cost
@@ -1004,9 +1109,14 @@ class MessagePipeline:
             temperature = self.settings.get("temperature")
 
         thinking = str(self.settings.get("thinking_mode") or "")
+        # v2 每一轮都要 JSON：双保险的第一道 response_format。
+        # 不支持的服务（或"认了但返回空"的，比如 DeepSeek 带历史时）会被客户端
+        # 自动关掉并重试一次 —— 见 llm/client.py 里的降级逻辑。
+        json_mode = bool(self.settings.get("reply_json_mode", True))
 
         signature = (
             base_url, api_key, model, str(max_tokens), str(temperature), thinking,
+            str(json_mode),
         )
         cached = self._llm_cache
         if cached is not None and cached[0] == signature:
@@ -1018,6 +1128,7 @@ class MessagePipeline:
             max_tokens=max_tokens,
             temperature=temperature,
             thinking=thinking,
+            json_mode=json_mode,
         )
         self._llm_cache = (signature, client)
         return client

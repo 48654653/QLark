@@ -82,6 +82,12 @@ DEFAULTS: dict[str, Any] = {
     "reply_fallback_text": "服务器宕机了喵",
     #: 是否注入「回复判断表」（教模型按情境判断该回多长、该不该认真）
     "reply_rubric_enabled": True,
+    #: 要不要发 response_format={"type":"json_object"}。
+    #:
+    #: v2 每次都要 JSON，这是双保险的第一道（第二道是末尾的提醒）。
+    #: MiMo 支持；DeepSeek 认这个字段但**带历史时会返回空内容** ——
+    #: 客户端会检测到空内容并自动关掉重试，所以默认开着是安全的。
+    "reply_json_mode": True,
 
     # ---- 语音回复（v2）----
     #

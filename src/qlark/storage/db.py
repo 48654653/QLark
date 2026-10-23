@@ -43,6 +43,11 @@ COLUMN_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("voice_enabled", "INTEGER DEFAULT 0"),
         ("voice_prompt", "TEXT DEFAULT NULL"),
     ],
+    "messages": [
+        # v2：这一条附带的图片文件名（JSON 数组）。图片本身在 <数据目录>/media/，
+        # 数据库里只记名字 —— base64 绝不入库。
+        ("media", "TEXT DEFAULT NULL"),
+    ],
 }
 
 
