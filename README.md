@@ -354,11 +354,23 @@ $env:PYTHONIOENCODING='utf-8'
 ### 打包成 exe
 
 ```powershell
-python tools\build_exe.py --clean-dir C:\some\empty\dir
+python tools\build_exe.py              # 打包到 dist\QLark\
+python tools\build_exe.py --no-runtime # 不带 NapCat 运行时，包更小
+python tools\build_exe.py --check      # 只做前置检查，不打包
 ```
 
-> **不要直接运行你要分发的那份。** 它会往自己目录写 QQ 配置和登录态，
-> 所以用 `--clean-dir` 指定一个干净的输出目录。
+产物是**免安装目录**，整个 `dist\QLark\` 拷走就能用。
+
+> [!IMPORTANT]
+> **不要把跑过的那份直接分发出去。** QLark 会把 QQ 号、token、登录态写进
+> 自己所在的目录 —— 你调试时运行过的那份已经带了你的隐私。
+> 发布前用 `--clean-dir` 清一遍（它**只清理并校验，不打包**）：
+>
+> ```powershell
+> python tools\build_exe.py --check
+> python tools\build_exe.py
+> # 确认 dist\QLark 里没有 onebot11_<QQ号>.json / qrcode.png / cache 之后再压缩
+> ```
 
 ### 「像不像人」评测
 
