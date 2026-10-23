@@ -1030,13 +1030,11 @@
     </div>
 
     <div class="tabs" id="promptTabs" role="tablist">
-      <button class="tab active" type="button" role="tab" data-prompt-tab="split">多段对话</button>
-      <button class="tab" type="button" role="tab" data-prompt-tab="meme">发送表情</button>
-      <button class="tab" type="button" role="tab" data-prompt-tab="preview">总体预览</button>
+      <button class="tab active" type="button" role="tab" data-prompt-tab="preview">总体预览</button>
     </div>
 
     <div class="modal-body">
-      <div class="prompt-pane" data-prompt-pane="split">
+      <div class="prompt-pane" data-prompt-pane="split" hidden>
         <div class="row-inline">
           <select class="input" id="promptSplitPreset">
             <option value="">（自定义 / 未选择模板）</option>
@@ -1064,7 +1062,7 @@
         <span class="field-err" id="ePromptMeme" hidden></span>
       </div>
 
-      <div class="prompt-pane" data-prompt-pane="preview" hidden>
+      <div class="prompt-pane" data-prompt-pane="preview">
         <span class="field-hint" id="promptPreviewNote">加载中…</span>
         <pre class="prompt-preview" id="promptPreview"></pre>
       </div>

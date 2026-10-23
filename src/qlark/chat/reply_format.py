@@ -192,8 +192,7 @@ MEME_PRESETS: tuple[dict[str, str], ...] = (
         "name": "极少配（会让实际频率更低）",
         "text": (
             "从这些里选一个：{emotions}\n"
-            "**大多数时候不要配这个键。**只有在这句话非常好笑、或者你真的生气了的时候才加上。\n"
-            "（注意：这会让实际配图频率明显低于设置里的概率。）"
+            "**大多数时候不要配这个键。**只有在这句话非常好笑、或者你真的生气了的时候才加上。"
         ),
     },
 )
@@ -671,7 +670,7 @@ def build_preview(
     ]
     if rules:
         blocks.append(
-            {"role": "system", "title": "【输出规则】（按掷中拼出）", "content": rules}
+            {"role": "system", "title": "【输出规则】（每一轮都注入）", "content": rules}
         )
     blocks.append(
         {

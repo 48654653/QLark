@@ -1,0 +1,100 @@
+"""前端配置白名单必须覆盖后端字段。
+
+这个坑踩过两次（都是同一类）：
+  · 人设：``split_enabled`` / ``meme_enabled`` 存进去了，但 ``normalizePersonas``
+    没列它们 —— 界面上"勾选 → 保存 → 自动变回未勾选"
+  · 模型：v2.1 的 ``voice_enabled`` / ``tts_model`` / ``keepalive_*`` /
+    ``quote_context_enabled`` 也被漏掉 —— 勾了语音、点应用，立刻弹回不允许
+
+原因：保存成功后会**再拉一次配置**、走 ``normalizeModelConfig`` 过滤，
+白名单里没有的字段变成 undefined，渲染出来就是"未勾选 / 空值"。
+后端完全正确，前端看不出来。
+
+所以这里做静态契约检查：**后端接受的字段，前端白名单必须一个不落**。
+纯读文件，不起 GUI，很快。
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+APP_JS = Path(__file__).resolve().parents[1] / "src" / "qlark" / "web" / "app.js"
+
+#: 这些字段由别的方式处理（比如 api_key 只有在"改过"时才提交、回显用 api_key_masked）
+SPECIAL_CASES = {"api_key"}
+
+
+def _function_body(name: str) -> str:
+    source = APP_JS.read_text(encoding="utf-8")
+    match = re.search(rf"function {name}\(raw\) \{{(.*?)\n  \}}", source, re.S)
+    assert match, f"app.js 里找不到 {name}()"
+    return match.group(1)
+
+
+@pytest.fixture(scope="module")
+def model_body() -> str:
+    return _function_body("normalizeModelConfig")
+
+
+@pytest.fixture(scope="module")
+def persona_body() -> str:
+    return _function_body("normalizePersonas")
+
+
+def test_every_model_field_is_in_the_frontend_whitelist(model_body: str) -> None:
+    from qlark.model_config import MODEL_FIELDS
+
+    missing = [
+        name
+        for name in MODEL_FIELDS
+        if name not in SPECIAL_CASES and name not in model_body
+    ]
+    assert not missing, (
+        "这些字段后端接受、前端白名单没列 —— 应用之后会被还原："
+        + "、".join(missing)
+    )
+
+
+def test_every_persona_column_is_in_the_frontend_whitelist(persona_body: str) -> None:
+    """人设的字段从 ``personas.list_public()`` 的输出里取，避免又手工维护一份清单。"""
+    from qlark.storage.db import COLUMN_MIGRATIONS
+
+    # list_public 的字段和数据库列一一对应，用迁移表当"后端认哪些列"的依据
+    columns = [name for name, _ in COLUMN_MIGRATIONS.get("personas", [])]
+    assert columns, "personas 的迁移表是空的，这个测试就失去意义了"
+    missing = [name for name in columns if name not in persona_body]
+    assert not missing, (
+        "这些人设字段后端存得进去、前端读不回来 —— 保存后会弹回原样："
+        + "、".join(missing)
+    )
+
+
+def test_voice_switch_survives_a_round_trip(model_body: str) -> None:
+    """把用户实际遇到的那一次单独钉住。"""
+    for name in (
+        "voice_enabled",
+        "voice_max_chars",
+        "tts_model",
+        "keepalive_enabled",
+        "keepalive_seconds",
+        "quote_context_enabled",
+    ):
+        assert name in model_body, f"{name} 不在前端白名单里，勾上之后会被还原"
+
+
+def test_whitelist_defaults_are_sane(model_body: str) -> None:
+    """新加的开关默认值要跟后端一致，否则"没配过"和"配成 false"会混淆。
+
+    这里只查字符串层面：``voice_enabled: !!s.voice_enabled`` 这种写法表示
+    默认关；``=== undefined) ? true :`` 这种写法表示默认开。
+    """
+    # 语音默认关（要在界面里主动打开），保活和引用默认开
+    assert re.search(r"voice_enabled: !!s\.voice_enabled", model_body), (
+        "语音应该默认关，用 !!s.voice_enabled 直取"
+    )
+    assert "keepalive_enabled" in model_body and "undefined" in model_body, (
+        "保活应该默认开（undefined 时取 true）"
+    )

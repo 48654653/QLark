@@ -1171,6 +1171,18 @@
       meme_chance: numOr(s.meme_chance, 0.2),
       chance_overrides: (s.chance_overrides && typeof s.chance_overrides === 'object') ? s.chance_overrides : null,
       reply_rubric_enabled: (s.reply_rubric_enabled === undefined) ? true : !!s.reply_rubric_enabled,
+      // v2 / v2.1 新增的开关。
+      //
+      // **这个白名单漏一个字段，界面上就会"勾了→应用→自动变回去"**：
+      // 后端明明存进去了，但 apply 之后前端会重新拉一次配置、走这个函数过滤，
+      // 漏掉的字段变成 undefined，渲染出来就是未勾选。
+      // 人设那边（normalizePersonas）已经因为同样的原因踩过一次，这里别再踩。
+      voice_enabled: !!s.voice_enabled,
+      voice_max_chars: numOr(s.voice_max_chars, 20),
+      tts_model: asStr(s.tts_model),
+      keepalive_enabled: (s.keepalive_enabled === undefined) ? true : !!s.keepalive_enabled,
+      keepalive_seconds: numOr(s.keepalive_seconds, 60),
+      quote_context_enabled: (s.quote_context_enabled === undefined) ? true : !!s.quote_context_enabled,
       meme_dir: String(s.meme_dir || ''),
       meme_dir_effective: String(s.meme_dir_effective || ''),
       meme_dir_available: !!s.meme_dir_available,
@@ -1894,7 +1906,9 @@
     clearFieldErrors(PERSONA_FIELDS);
     setText(dom.promptModalHint, '');
     loadPromptPresets();
-    switchPromptTab('split');
+    // v2 起这两套自定义提示词已经不起作用了（规则每轮都注入，由模型自己判断，
+    // 没有"掷中"这回事），所以弹窗只剩「总体预览」——那才是用户真正想看的东西。
+    switchPromptTab('preview');
     dom.promptModal.hidden = false;
   }
 

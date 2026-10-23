@@ -133,13 +133,24 @@ class ReplyPlan:
     degraded: str | None = None
     #: 多条之间的间隔（毫秒）；人设级设置优先，留空则用全局
     delay_ms: int = 0
+    #: 模型这次**原样返回的文本**（v2 起就是那个 JSON 字符串）
+    #:
+    #: 记忆里存它、而不是简化后的自然语言，原因有两个：
+    #:   ① 后台调试时能看到真实输出，不用猜"它当时到底怎么回的"
+    #:   ② 模型回看历史时看到的示范也是 JSON，**格式自洽** ——
+    #:      如果历史里全是散文，它会慢慢被带跑，越来越不肯输出 JSON
+    raw_text: str = ""
 
     @property
     def memory_text(self) -> str:
-        """记忆里存什么：拼成一行的普通文本，**不存 JSON、也不记表情标注**。
+        """落库用的文本。
 
-        见 :func:`qlark.chat.reply_format.compose_memory_text` 里对"为什么"的说明。
+        v2 起优先存**模型原始输出**（JSON）；原始输出不可用（为空）时才退回
+        拼起来的自然文本。
         """
+        raw = str(self.raw_text or "").strip()
+        if raw:
+            return raw
         return compose_memory_text(self.texts)
 
 
@@ -727,8 +738,9 @@ class MessagePipeline:
             return
 
         # 发送成功后才落库，保证记忆里不会出现"有问无答"的空洞。
-        # 注意存的是 memory_text（只含 [图片] 占位），**绝不能把 base64 写进记忆**；
-        # 机器人自己说的话存 plan.memory_text（自然文本 + [表情：x]），**不存 JSON**。
+        # 用户说的存 memory_text（含 [图片] 占位），**绝不能把 base64 写进记忆**；
+        # 机器人自己说的存**模型原始输出**（v2 起就是那个 JSON）—— 见
+        # ReplyPlan.memory_text 上对"为什么要存 JSON"的说明。
         self.store.append(
             key, "user", memory_text, has_image=parsed.has_image, media=media_names,
             msg_id=event.message_id, created_at=event.time or None,
@@ -869,6 +881,7 @@ class MessagePipeline:
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             delay_ms=delay_ms,
+            raw_text=str(result.text or ""),
         )
         if parsed.ok:
             plan.texts = parsed.messages
@@ -912,6 +925,8 @@ class MessagePipeline:
             plan.prompt_tokens += follow.prompt_tokens
             plan.completion_tokens += follow.completion_tokens
             parsed = parse_reply(follow.text, **spec)
+            # 重试成功了就以这一轮为准 —— 记忆里要存**最终生效**的那份输出
+            plan.raw_text = str(follow.text or "")
             if parsed.ok:
                 plan.texts = parsed.messages
                 plan.meme = parsed.meme

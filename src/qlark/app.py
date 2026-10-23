@@ -239,59 +239,86 @@ class Application:
     ) -> dict[str, Any]:
         """预览"即将发给 AI 的全部内容"。
 
-        **这里两个功能都按"掷中"来拼**，否则大多数时候预览里什么都看不到 ——
-        用户点进来就是想看规则到底写了什么。
+        v2 起**没有概率机制**了：每一轮都会注入【输出规则】和末尾的格式提醒，
+        要不要配表情、要不要发语音由模型自己判断。所以这里按"最完整的那种情况"
+        拼出来 —— 用户点进来就是想看规则到底写了什么。
 
-        ``split_prompt`` / ``meme_prompt`` 传入时优先用它们，这样**改完还没保存
-        也能看到效果**；不传则用已保存的。
+        ``split_prompt`` / ``meme_prompt`` 只为兼容旧的前端调用保留，**已经不起作用**
+        （那两套自定义提示词在 v2 里不存在了）。
 
         注意「长期记忆摘要」是**每个会话一份**的，预览里拿不到具体会话，
         所以放一条说明占位，不能凭空造一个假的摘要出来骗人。
         """
+        _ = (split_prompt, meme_prompt)
         persona = self.personas.get(int(uid))
         if persona is None:
             return {"ok": False, "error": f"人设 {uid} 不存在"}
 
-        split_text = str(split_prompt or persona.get("split_prompt") or "")
-        meme_text = str(meme_prompt or persona.get("meme_prompt") or "")
-
         library = self._meme_library()
-        emotions = library.emotions()
+        emotions = library.emotions() if persona.get("meme_enabled") else []
+        voice_on = bool(persona.get("voice_enabled")) and bool(
+            self.settings.get("voice_enabled", False)
+        )
+        try:
+            max_messages = int(self.settings.get("split_max_messages") or 3)
+        except (TypeError, ValueError):
+            max_messages = 3
+        try:
+            voice_max_chars = int(self.settings.get("voice_max_chars") or 20)
+        except (TypeError, ValueError):
+            voice_max_chars = 20
+
         rules = build_output_rules(
-            split=True,
-            max_messages=self.settings.split_max_messages,
-            meme=True,
             emotions=emotions or ["（表情目录里没有图片）"],
-            split_prompt=split_text,
-            meme_prompt=meme_text,
+            max_messages=max_messages,
+            voice=voice_on,
+            voice_max_chars=voice_max_chars,
         )
 
-        if not bool(persona.get("split_enabled")) and not bool(persona.get("meme_enabled")):
-            note = (
-                "这个人设两个开关都没勾选 —— 实际运行时**不会**注入【输出规则】，"
-                "模型只会输出普通文本。"
-            )
-        else:
-            note = (
-                f"多段连发概率 {self._fmt_chance(persona, 'split_chance', self.settings.split_chance)}、"
-                f"发送图片概率 {self._fmt_chance(persona, 'meme_chance', self.settings.meme_chance)}："
-                "掷不中的轮次【输出规则】整块都不会出现。"
-            )
+        note = self._preview_note(persona, voice_on, max_messages)
 
         blocks_and_note = build_preview(
             system_prompt=str(persona.get("system_prompt") or ""),
             rules=rules,
             enabled_note=note,
-            # 预览按"掷中"画，所以格式提醒也要画出来 —— 否则和实际发出去的不一致
             reminder=FORMAT_REMINDER if rules else "",
         )
         return {"ok": True, **blocks_and_note}
 
-    def _fmt_chance(self, persona: dict[str, Any], key: str, fallback: float) -> str:
-        value = persona.get(key)
-        if value is None or value == "":
-            return f"{fallback * 100:.0f}%（跟随全局）"
-        return f"{float(value) * 100:.0f}%"
+    def _preview_note(
+        self, persona: dict[str, Any], voice_on: bool, max_messages: int
+    ) -> str:
+        """预览里那段"实际运行时是什么样"的说明。"""
+        meme_on = bool(persona.get("meme_enabled"))
+        split_on = bool(persona.get("split_enabled"))
+        keepalive_on = bool(self.settings.get("keepalive_enabled", True))
+        try:
+            keepalive_sec = int(self.settings.get("keepalive_seconds") or 60)
+        except (TypeError, ValueError):
+            keepalive_sec = 60
+
+        lines = [
+            "实际运行时**每一轮**都会注入【输出规则】和末尾的格式提醒 ——",
+            "v2 起没有掷骰子了，要不要配表情、发语音、分几条都由模型自己判断。",
+            "",
+            f"· 配表情：{'开启（可选表情有 ' + str(len(self._meme_library().emotions())) + ' 种）' if meme_on else '未开启'}",
+            f"· 发语音：{'开启（最多 ' + str(self._voice_max_chars()) + ' 字）' if voice_on else '未开启'}",
+            f"· 分段：{'最多 ' + str(max_messages) + ' 条' if split_on else '未开启'}",
+        ]
+        if keepalive_on:
+            lines.append(
+                f"· @ 保活：开启（被 @ 之后 {keepalive_sec} 秒内不用再 @，"
+                "只对那个人有效）"
+            )
+        else:
+            lines.append("· @ 保活：未开启（每条都要 @）")
+        return "\n".join(lines)
+
+    def _voice_max_chars(self) -> int:
+        try:
+            return int(self.settings.get("voice_max_chars") or 20)
+        except (TypeError, ValueError):
+            return 20
 
     # ================================================================== M3：账号
     def list_accounts(self) -> dict[str, Any]:

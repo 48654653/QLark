@@ -388,15 +388,22 @@ def test_empty_meme_dir_skips_meme(ready, fake_openai: FakeOpenAI, tmp_path) -> 
     assert _reply_texts_from(ready.home) == ["哼"]
 
 
-def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, memes) -> None:
-    """记忆里存的必须是一行普通文本：没有 JSON、没有多行、没有表情标注。
+def test_memory_stores_the_raw_json(ready, fake_openai: FakeOpenAI, memes) -> None:
+    """v2.1：记忆里存**模型原始输出的 JSON**，不再简化成自然语言。
 
-    这三样任何一样留在历史里，模型都会照着模仿 —— 尤其是没掷中的轮次，
-    它会把 ``[表情：开心]`` 当正文吐出来发给用户。
+    两个理由：
+      ① 后台调试时能看到真实输出，不用猜它当时到底怎么回的
+      ② 模型回看历史时看到的示范也是 JSON，**格式自洽** ——
+         如果历史里全是散文，它会慢慢被带跑，越来越不肯输出 JSON
+
+    （旧版正好相反：刻意存自然语言、把表情标注也去掉，怕模型模仿。
+      那是因为骰子时代"要不要 JSON"本身是随机的，历史里的 JSON 示例
+      会和当轮要求打架。v2 每轮都要求 JSON，这个矛盾就不存在了。）
     """
     ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
     _enable(ready, split_enabled=True, meme_enabled=True)
-    fake_openai.replies('{"messages": ["快到中午了", "你不会刚睡醒吧？"], "meme": "开心"}', repeat_last=True)
+    raw = '{"messages": ["快到中午了", "你不会刚睡醒吧？"], "meme": "开心"}'
+    fake_openai.replies(raw, repeat_last=True)
 
     _say(ready)
 
@@ -404,10 +411,30 @@ def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, me
     assert wait_memory(ready.bot.pipeline.store, key, min_rows=2), "记忆没落库"
     rows = ready.bot.pipeline.store.memory_messages(key)
     assistant = next(r for r in rows if r["role"] == "assistant")
-    assert assistant["content"] == "快到中午了，你不会刚睡醒吧？", assistant["content"]
-    assert '"messages"' not in assistant["content"], "JSON 进记忆了"
-    assert "[表情" not in assistant["content"], "表情标注进记忆了"
-    assert "\n" not in assistant["content"], "多行内容进记忆了"
+    assert assistant["content"] == raw, assistant["content"]
+    assert '"messages"' in assistant["content"], "原始 JSON 应该原样保留"
+    assert "[表情" not in assistant["content"], "不该再混进表情标注"
+
+
+def test_memory_sends_json_back_to_the_model(ready, fake_openai: FakeOpenAI, memes) -> None:
+    """第二轮请求里，历史中的助手消息也应该还是 JSON —— 格式自洽。"""
+    ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
+    _enable(ready, split_enabled=True, meme_enabled=True)
+    fake_openai.replies('{"messages": ["嗯"], "meme": null}', repeat_last=True)
+
+    _say(ready)
+    assert _reply_texts_from(ready.home) == ["嗯"]
+
+    fake_openai.reset()
+    _say(ready, "接着说", message_id=2)
+    assert wait_for(lambda: fake_openai.requests(), timeout=30)
+
+    messages = fake_openai.requests()[-1]["messages"]
+    assistant = [m for m in messages if m.get("role") == "assistant"]
+    assert assistant, "历史里应该有助手说过的话"
+    assert all('"messages"' in str(m.get("content")) for m in assistant), (
+        f"历史里的助手消息应该保持 JSON 格式：{assistant[-1]}"
+    )
 
 
 def test_rules_are_present_every_round(ready, fake_openai: FakeOpenAI, memes) -> None:
