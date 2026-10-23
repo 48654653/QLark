@@ -271,7 +271,10 @@ def test_context_carries_history_to_the_model(ready, fake_openai: FakeOpenAI) ->
     )
     assert "第一句" in joined, "历史没有带上"
     assert "收到：" in joined, "上一轮的回复没有带上"
-    assert messages[-1]["content"].rstrip().endswith("消息：第二句")
+    # v2：用户消息末尾一定跟着格式提醒，所以"消息：第二句"不再位于最末尾
+    last = str(messages[-1]["content"])
+    assert "消息：第二句" in last
+    assert last.rstrip().endswith("不要写别的话。）"), "末尾应当有格式提醒"
 
 
 # --------------------------------------------------------------------------- #

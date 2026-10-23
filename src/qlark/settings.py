@@ -82,6 +82,30 @@ DEFAULTS: dict[str, Any] = {
     "reply_fallback_text": "服务器宕机了喵",
     #: 是否注入「回复判断表」（教模型按情境判断该回多长、该不该认真）
     "reply_rubric_enabled": True,
+
+    # ---- 语音回复（v2）----
+    #
+    # 没有骰子：要不要发由模型自己在 JSON 里填 voice。这里只管"能不能"和护栏。
+    "voice_enabled": False,
+    #: 语音的字数上限。超过就忽略模型的 voice，改发文字 ——
+    #: 实测 46 字要念 21 秒，长语音没人愿意听。
+    "voice_max_chars": 20,
+    #: TTS 模型名。**共用对话的 base_url / api_key**，只单独配模型名。
+    "tts_model": "mimo-v2.5-tts-voicedesign",
+    #: 合成超时（秒）
+    "tts_timeout_s": 20,
+    #: 全局默认音色描述；人设上没写就用这个
+    "voice_prompt": (
+        "一个十三四岁少女的声音，清透干净，稚嫩里带着奶气，不带沙哑也不嗲。"
+        "说话轻快，还带着点没长大的软。不用把情绪演出来。"
+    ),
+
+    # ---- 媒体上下文（v2）----
+    #
+    # 记忆里不放 [图片] 占位符，真实图片直接进上下文。
+    # 实测 token ≈ 像素数 ÷ 1024：512px ≈ 258 token，很便宜。
+    "media_history_rounds": 2,
+    "image_max_side": 512,
     #: 模型思考强度：off / auto / low / medium / high / max（空串 = 不发送，跟随服务端默认）
     #:
     #: **默认 off**。实测 DeepSeek 的默认是「开思考」，而一次闲聊回复里有

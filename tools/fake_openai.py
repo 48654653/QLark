@@ -152,6 +152,30 @@ def count_prompt_tokens(messages: object) -> int:
     )
 
 
+#: 我们的【输出规则】里一定有这一句。它出现就说明这次请求在要 JSON 输出。
+#: v2 起规则**每一轮都在**，所以走完整流水线的请求都会命中。
+JSON_MARKER = "只输出一个 JSON 对象"
+
+
+def _wants_json(messages: list) -> bool:
+    """这次请求是不是要求 JSON 输出（按提示词里有没有那句标记判断）。"""
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            if JSON_MARKER in content:
+                return True
+            continue
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text" and JSON_MARKER in str(part.get("text") or ""):
+                    return True
+    return False
+
+
 def build_reply(body: dict) -> str:
     """按固定规则生成回复文本（见模块 docstring）。"""
     scripted = STATE.take_reply()
@@ -165,6 +189,10 @@ def build_reply(body: dict) -> str:
     text = _last_user_text(messages)
     if text is None:
         return "收到："
+    # 提示词要求 JSON 就吐一个合法的 JSON —— 走完整流水线的测试看到的
+    # 回复文本仍然和以前一模一样（「收到：xxx」），只是格式符合 v2 的约定。
+    if _wants_json(messages):
+        return json.dumps({"messages": [f"收到：{text}"]}, ensure_ascii=False)
     return f"收到：{text}"
 
 

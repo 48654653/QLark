@@ -33,6 +33,10 @@ from test_m2_integration import _inject, _reply_texts, _reset, ready  # noqa: F4
 
 GROUP = "888888"
 
+#: v2 的解析参数：**永远是 JSON**，最多 3 条，语音默认不开。
+#: 原来这里还带着 ``allow_split`` / ``allow_meme`` 两个骰子开关，已经删掉了。
+SPEC = dict(expect_json=True, max_messages=3)
+
 
 # --------------------------------------------------------------------------- #
 # 工具
@@ -161,69 +165,6 @@ def test_library_pick_randomises_within_an_emotion(tmp_path) -> None:
 # --------------------------------------------------------------------------- #
 # 输出规则提示词
 # --------------------------------------------------------------------------- #
-def test_output_rules_empty_when_both_off() -> None:
-    """两个都关时**一个字都不提** —— 这是"关掉之后不会被带跑"的第一道保障。"""
-    assert build_output_rules(split=False, max_messages=2, meme=False, emotions=[]) == ""
-
-
-def test_output_rules_split_only() -> None:
-    rules = build_output_rules(split=True, max_messages=2, meme=False, emotions=[])
-    assert "【输出规则】" in rules
-    assert "messages" in rules
-    assert "最多 2 条" in rules
-    assert "不要输出 meme 键" in rules
-
-
-def test_output_rules_are_directive_not_permissive() -> None:
-    """**骰子已经掷过了，规则必须是命令式。**
-
-    踩过的坑：第一版写的是"默认只写 1 条 / 多数时候不要填"，模型老老实实照办 ——
-    骰子明明掷中了，实际触发率还是接近 0。随机该由代码负责，提示词一旦开了口子，
-    频率就失控。这条测试就是防止再写回去。
-    """
-    split_rules = build_output_rules(split=True, max_messages=2, meme=False, emotions=[])
-    assert "本轮请写成 2 条" in split_rules
-    for bad in ("多数时候请只写 1 条", "默认只写 1 条", "想补一句的时候"):
-        assert bad not in split_rules, f"又写回了许可式措辞：{bad!r}"
-
-    meme_rules = build_output_rules(split=False, max_messages=2, meme=True, emotions=["开心"])
-    assert "本轮请配一个表情" in meme_rules
-    for bad in ("多数时候不要填", "想配一个表情时才填"):
-        assert bad not in meme_rules, f"又写回了许可式措辞：{bad!r}"
-
-
-def test_output_rules_split_limit_one_is_single() -> None:
-    """上限设成 1 时就是纯单条，不该再叫它拆。"""
-    rules = build_output_rules(split=True, max_messages=1, meme=False, emotions=[])
-    assert "只能写 1 条" in rules
-    assert "本轮请写成 2 条" not in rules
-
-
-def test_output_rules_meme_only() -> None:
-    rules = build_output_rules(split=False, max_messages=2, meme=True, emotions=["哭哭", "害羞"])
-    assert "只能写 1 条" in rules
-    assert "哭哭、害羞" in rules
-    assert "本轮请配一个表情" in rules
-
-
-def test_output_rules_both() -> None:
-    rules = build_output_rules(split=True, max_messages=3, meme=True, emotions=["开心"])
-    assert "最多 3 条" in rules
-    assert "开心" in rules
-
-
-def test_output_rules_max_is_a_range_not_a_fixed_two() -> None:
-    """上限调大后，规则里要跟着变成 2~N，而不是写死两条。"""
-    rules = build_output_rules(split=True, max_messages=5, meme=False, emotions=[])
-    assert "最多 5 条" in rules
-
-
-# --------------------------------------------------------------------------- #
-# 解析
-# --------------------------------------------------------------------------- #
-SPEC = {"expect_json": True, "allow_split": True, "allow_meme": True, "max_messages": 2}
-
-
 def test_parse_plain_json() -> None:
     parsed = parse_reply('{"messages": ["在的", "怎么啦"]}', **SPEC)
     assert parsed.ok and parsed.messages == ["在的", "怎么啦"]
@@ -374,16 +315,6 @@ def memes(tmp_path):
     return tmp_path
 
 
-def test_probability_zero_never_splits(ready, fake_openai: FakeOpenAI) -> None:
-    ready.settings.update(split_chance=0.0, meme_chance=0.0, split_delay_ms=0)
-    _enable(ready, split_enabled=True, meme_enabled=True)
-    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
-
-    _say(ready)
-
-    assert len(_sent_segments(ready.home)) == 1, "概率为 0 却分了两条"
-
-
 def test_probability_one_always_splits(ready, fake_openai: FakeOpenAI) -> None:
     ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
     _enable(ready, split_enabled=True, meme_enabled=False)
@@ -417,19 +348,6 @@ def test_split_sends_with_delay(ready, fake_openai: FakeOpenAI) -> None:
     assert gap >= 0.25, f"两条之间只隔了 {gap:.3f}s，太快了"
 
 
-def test_disabled_persona_never_splits(ready, fake_openai: FakeOpenAI) -> None:
-    """概率拉满，但人设没勾选 —— 依然不分。开关优先于概率。"""
-    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
-    _enable(ready, split_enabled=False)
-    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
-
-    _say(ready)
-    assert len(_sent_segments(ready.home)) == 1
-
-
-# --------------------------------------------------------------------------- #
-# 端到端：表情
-# --------------------------------------------------------------------------- #
 def test_meme_is_attached_when_rolled(ready, fake_openai: FakeOpenAI, memes) -> None:
     ready.settings.update(split_chance=0.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
     _enable(ready, split_enabled=False, meme_enabled=True)
@@ -444,17 +362,6 @@ def test_meme_is_attached_when_rolled(ready, fake_openai: FakeOpenAI, memes) -> 
     from urllib.parse import unquote
 
     assert "生气.png" in unquote(str(images[0]["data"]["file"])), images[0]
-
-
-def test_meme_absent_when_probability_zero(ready, fake_openai: FakeOpenAI, memes) -> None:
-    ready.settings.update(split_chance=0.0, meme_chance=0.0, meme_dir=str(memes), split_delay_ms=0)
-    _enable(ready, meme_enabled=True)
-    fake_openai.replies('{"messages": ["哼"], "meme": "生气"}', repeat_last=True)
-
-    _say(ready)
-
-    segments = [seg for group in _sent_segments(ready.home) for seg in group]
-    assert not [seg for seg in segments if seg.get("type") == "image"], "概率为 0 却发了表情"
 
 
 def test_unknown_emotion_does_not_break_the_reply(ready, fake_openai: FakeOpenAI, memes) -> None:
@@ -481,23 +388,6 @@ def test_empty_meme_dir_skips_meme(ready, fake_openai: FakeOpenAI, tmp_path) -> 
     assert _reply_texts_from(ready.home) == ["哼"]
 
 
-def test_gates_are_independent(ready, fake_openai: FakeOpenAI, memes) -> None:
-    """分段关、表情开 → 只发一条，但可以带表情。"""
-    ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
-    _enable(ready, split_enabled=False, meme_enabled=True)
-    fake_openai.replies('{"messages": ["一条", "两条"], "meme": "开心"}', repeat_last=True)
-
-    _say(ready)
-
-    texts = _reply_texts_from(ready.home)
-    assert texts == ["一条\n两条"], f"关了分段却发了多条：{texts}"
-    segments = [seg for group in _sent_segments(ready.home) for seg in group]
-    assert [seg for seg in segments if seg.get("type") == "image"], "表情被分段开关连累了"
-
-
-# --------------------------------------------------------------------------- #
-# 端到端：记忆里存什么
-# --------------------------------------------------------------------------- #
 def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, memes) -> None:
     """记忆里存的必须是一行普通文本：没有 JSON、没有多行、没有表情标注。
 
@@ -520,20 +410,22 @@ def test_memory_stores_readable_text_not_json(ready, fake_openai: FakeOpenAI, me
     assert "\n" not in assistant["content"], "多行内容进记忆了"
 
 
-def test_history_has_no_format_for_the_model_to_imitate(ready, fake_openai: FakeOpenAI, memes) -> None:
-    """掷中之后紧接着一轮**没掷中**：这一轮的请求里不能出现任何可模仿的格式标记。"""
-    ready.settings.update(split_chance=1.0, meme_chance=1.0, meme_dir=str(memes), split_delay_ms=0)
+def test_rules_are_present_every_round(ready, fake_openai: FakeOpenAI, memes) -> None:
+    """v2：**规则每一轮都在**，不再有"掷中了才注入"。
+
+    旧版这里断言的是"没掷中就不该出现【输出规则】"。骰子删掉之后，
+    规则恒定存在 —— 但历史里仍然不能残留任何可模仿的格式标记。
+    """
+    ready.settings.update(meme_dir=str(memes), split_delay_ms=0)
     _enable(ready, split_enabled=True, meme_enabled=True)
     fake_openai.replies('{"messages": ["一", "二"], "meme": "开心"}', repeat_last=True)
     _say(ready, expect=2)
 
-    # 这一轮把概率归零 = 不掷中，规则不会注入
-    ready.settings.update(split_chance=0.0, meme_chance=0.0)
     fake_openai.reset()
-    _say(ready, message_id=99, expect=1)
+    _say(ready, message_id=99, expect=2)
 
     payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
-    assert "【输出规则】" not in payload, "没掷中却注入了规则"
+    assert "【输出规则】" in payload, "规则应该每一轮都注入"
     assert "[表情" not in payload, "历史里留着表情标注，模型会照着学"
     assert '\\n[表情' not in payload
 
@@ -582,35 +474,6 @@ def test_unrecoverable_json_falls_back(ready, fake_openai: FakeOpenAI) -> None:
     assert _reply_texts_from(ready.home) == ["服务器宕机了喵"]
 
 
-def test_plain_reply_is_unaffected_when_both_off(ready, fake_openai: FakeOpenAI) -> None:
-    """两个都关时，普通文本回复**不该**走重试 —— 它本来就是对的。"""
-    ready.settings.update(split_chance=1.0, meme_chance=1.0, reply_retry_max=1, split_delay_ms=0)
-    _enable(ready, split_enabled=False, meme_enabled=False)
-    fake_openai.reset()
-
-    _say(ready, "随便说句话")
-
-    assert fake_openai.requests(), "没有调用模型"
-    assert len(fake_openai.requests()) == 1, "普通文本被当成格式错误重试了"
-    assert _reply_texts_from(ready.home), "没有回复"
-
-
-def test_rules_absent_from_prompt_when_both_off(ready, fake_openai: FakeOpenAI) -> None:
-    """两个都关时，提示词里**不能出现**输出规则 —— 否则等于又给了模型口子。"""
-    ready.settings.update(split_chance=1.0, meme_chance=1.0)
-    _enable(ready, split_enabled=False, meme_enabled=False)
-    fake_openai.reset()
-
-    _say(ready)
-
-    payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
-    assert "【输出规则】" not in payload
-    assert "meme" not in payload
-
-
-# --------------------------------------------------------------------------- #
-# 人设级数值：留空跟随全局，填了就覆盖
-# --------------------------------------------------------------------------- #
 def test_persona_chance_overrides_global(ready, fake_openai: FakeOpenAI) -> None:
     """全局分段概率 0，但人设上设了 100% —— 人设优先。"""
     ready.settings.update(split_chance=0.0, meme_chance=0.0, split_delay_ms=0)
@@ -629,16 +492,6 @@ def test_blank_persona_chance_follows_global(ready, fake_openai: FakeOpenAI) -> 
 
     _say(ready)
     assert len(_sent_segments(ready.home)) == 2, "留空没有跟随全局"
-
-
-def test_persona_zero_chance_means_never(ready, fake_openai: FakeOpenAI) -> None:
-    """填 0 和留空是两回事：填 0 就是永不触发。"""
-    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
-    _enable(ready, split_enabled=True, split_chance=0.0)
-    fake_openai.replies('{"messages": ["一", "二"]}', repeat_last=True)
-
-    _say(ready)
-    assert len(_sent_segments(ready.home)) == 1, "填 0 却触发了"
 
 
 def test_persona_delay_is_used(ready, fake_openai: FakeOpenAI) -> None:
@@ -686,52 +539,12 @@ def test_persona_store_validates_ranges(ready) -> None:
 # --------------------------------------------------------------------------- #
 # 自定义提示词
 # --------------------------------------------------------------------------- #
-def test_custom_split_prompt_replaces_builtin() -> None:
-    rules = build_output_rules(
-        split=True, max_messages=3, meme=False, emotions=[],
-        split_prompt="给我拆成 {max_messages} 段，每段不超过 {chars} 字",
-    )
-    assert "给我拆成 3 段，每段不超过 40 字" in rules
-    assert "像真人打字时" not in rules, "内置文案没被替换掉"
-
-
-def test_custom_meme_prompt_gets_emotion_list() -> None:
-    rules = build_output_rules(
-        split=False, max_messages=2, meme=True, emotions=["嫌弃", "害羞"],
-        meme_prompt="从 {emotions} 里挑一个最贴的",
-    )
-    assert "从 嫌弃、害羞 里挑一个最贴的" in rules
-
-
-def test_custom_prompt_with_stray_braces_does_not_crash() -> None:
-    """用户可能在提示词里写示例 JSON，花括号不该把整轮回复搞崩。"""
-    rules = build_output_rules(
-        split=True, max_messages=2, meme=False, emotions=[],
-        split_prompt='照这个格式：{"messages": ["a", "b"]}',
-    )
-    assert '{"messages": ["a", "b"]}' in rules
-
-
-def test_persona_custom_prompt_reaches_the_model(ready, fake_openai: FakeOpenAI) -> None:
-    ready.settings.update(split_chance=1.0, meme_chance=0.0, split_delay_ms=0)
-    _enable(ready, split_enabled=True, split_prompt="这是我自己写的分段规则喵")
-    fake_openai.replies('{"messages": ["一"]}', repeat_last=True)
-
-    _say(ready)
-
-    payload = json.dumps(fake_openai.requests()[-1], ensure_ascii=False)
-    assert "这是我自己写的分段规则喵" in payload
-
-
 def test_preview_prompt_shows_everything() -> None:
     """总体预览要把人设提示词、【输出规则】、摘要占位、示例用户消息都列出来。"""
     res = build_preview(
         system_prompt="你是米蛋，一只傲娇的猫娘。",
-        rules=build_output_rules(
-            split=True, max_messages=2, meme=True, emotions=["嫌弃"],
-            split_prompt="自定义分段规则",
-        ),
-        enabled_note="多段连发概率 25%、发送图片概率 20%",
+        rules=build_output_rules(emotions=["嫌弃"], max_messages=3, voice=True),
+        enabled_note="语音回复已开启、发送图片已开启",
     )
 
     titles = [b["title"] for b in res["blocks"]]
@@ -739,10 +552,11 @@ def test_preview_prompt_shows_everything() -> None:
     assert any("输出规则" in t for t in titles)
     assert any("长期记忆摘要" in t for t in titles)
     assert any("用户消息" in t for t in titles)
-    assert "自定义分段规则" in res["text"]
+    assert "只输出一个 JSON 对象" in res["text"]
+    assert "voice" in res["text"], "开了语音就要在规则里体现"
     assert "你是米蛋" in res["text"]
     assert "昵称：" in res["text"], "示例用户消息应当体现三行块格式"
-    assert "多段连发概率" in res["note"]
+    assert "语音回复已开启" in res["note"]
 
 
 def test_preview_prompt_handles_missing_system_prompt() -> None:
@@ -769,28 +583,6 @@ def test_first_preset_is_the_builtin_default() -> None:
     """第一套就是留空时用的那套 —— 否则"默认"和"模板列表"对不上。"""
     assert SPLIT_PRESETS[0]["text"] == SPLIT_RULE_DEFAULT
     assert MEME_PRESETS[0]["text"] == MEME_RULE_DEFAULT
-
-
-def test_every_split_preset_can_be_rendered() -> None:
-    """每套模板都要能填进占位符并产出可用的规则，不能有哪套是坏的。"""
-    for item in SPLIT_PRESETS:
-        rules = build_output_rules(
-            split=True, max_messages=2, meme=False, emotions=[],
-            split_prompt=item["text"],
-        )
-        assert "{max_messages}" not in rules, f"{item['id']} 的占位符没填上"
-        assert "{chars}" not in rules, f"{item['id']} 的占位符没填上"
-        assert "2 条" in rules, f"{item['id']} 没体现条数上限"
-
-
-def test_every_meme_preset_can_be_rendered() -> None:
-    for item in MEME_PRESETS:
-        rules = build_output_rules(
-            split=False, max_messages=2, meme=True, emotions=["嫌弃", "害羞"],
-            meme_prompt=item["text"],
-        )
-        assert "{emotions}" not in rules, f"{item['id']} 的占位符没填上"
-        assert "嫌弃、害羞" in rules, f"{item['id']} 没带上表情清单"
 
 
 def test_preset_text_lookup() -> None:

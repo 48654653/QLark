@@ -200,7 +200,10 @@ def test_persona_system_prompt_reaches_the_model(live, fake_openai: FakeOpenAI) 
     assert messages[0]["role"] == "system"
     assert "傲娇女仆" in messages[0]["content"]
     # 默认是群聊消息，正文带着「昵称 / 时间 / 消息」三行块
-    assert messages[-1]["content"].rstrip().endswith("消息：你好")
+    # （v2：末尾还跟着格式提醒，所以用 in 而不是 endswith）
+    last = str(messages[-1]["content"])
+    assert "消息：你好" in last
+    assert last.rstrip().endswith("不要写别的话。）"), "末尾应当有格式提醒"
 
 
 def test_persona_memory_is_isolated(live) -> None:
@@ -256,9 +259,8 @@ def test_persona_override_changes_model_request(live, fake_openai: FakeOpenAI) -
 def test_empty_persona_sends_no_system_message(live, fake_openai: FakeOpenAI) -> None:
     """空人设不能发一条空的 system —— 部分 OpenAI 兼容服务会因此报错。
 
-    注意：QLark 自己**会**注入 system 块（回复判断表、格式提醒），
-    所以这里断言的是"没有**空的** system"，不是"完全没有 system"。
-    回复判断表本身是常驻的，这里关掉它，聚焦在人设上。
+    v2 起【输出规则】**每一轮都在**，所以请求里一定会有 system 块。
+    这里断言的是"没有**空的** system"，而不是"完全没有 system"。
     """
     live.settings.update(reply_rubric_enabled=False)
     _inject(live.home, text="空人设测试")
@@ -266,8 +268,9 @@ def test_empty_persona_sends_no_system_message(live, fake_openai: FakeOpenAI) ->
 
     messages = fake_openai.requests()[-1]["messages"]
     system_blocks = [m for m in messages if m["role"] == "system"]
+    assert system_blocks, "输出规则应该常驻"
     assert all(str(m.get("content") or "").strip() for m in system_blocks), "发了一条空的 system"
-    assert messages[0]["role"] == "user"
+    assert "【输出规则】" in str(system_blocks[0]["content"])
 
 
 # --------------------------------------------------------------------------- #

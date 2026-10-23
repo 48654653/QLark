@@ -202,7 +202,10 @@ def test_label_can_be_disabled(ready, fake_openai: FakeOpenAI) -> None:
 
     _send(ready, "早上好啊", message_id=3020, nickname="毛糙蛋")
 
-    assert _user_content(fake_openai.requests()[-1]) == "早上好啊"
+    # v2：用户消息末尾一定跟着格式提醒，所以只比较正文开头
+    content = _user_content(fake_openai.requests()[-1])
+    assert content.startswith("早上好啊"), content
+    assert "昵称：" not in content
 
 
 def test_default_is_on(ready) -> None:

@@ -137,8 +137,12 @@ def test_reminder_appears_twice_when_gate_hits(ready, fake_openai: FakeOpenAI) -
     assert str(messages[-1]["content"]).rstrip().endswith(FORMAT_REMINDER)
 
 
-def test_neither_reminder_when_gate_misses(ready, fake_openai: FakeOpenAI) -> None:
-    """没掷中时两处都不能有 —— 那时模型本就该输出散文。"""
+def test_reminder_is_present_every_round(ready, fake_openai: FakeOpenAI) -> None:
+    """v2：格式提醒**每一轮都发**，不再有"掷中才加"。
+
+    旧版这里断言"没掷中时两处都不能有"。骰子删掉之后，模型每一轮都被要求
+    输出 JSON，提醒必须恒定存在 —— 否则它一放松就写散文，解析直接失败。
+    """
     ready.settings.update(split_chance=0.0, meme_chance=0.0)
     ready.bot.pipeline.personas.update(1, {"split_enabled": True, "meme_enabled": True})
     fake_openai.reset()
@@ -147,10 +151,10 @@ def test_neither_reminder_when_gate_misses(ready, fake_openai: FakeOpenAI) -> No
 
     payload = _payloads(fake_openai)[-1]
     joined = json.dumps(payload, ensure_ascii=False)
-    assert FORMAT_REMINDER not in joined, "没掷中却加了提醒"
-    assert "【输出规则】" not in joined
-    for message in payload["messages"]:
-        assert message["role"] != "system" or "提醒" not in str(message["content"])
+    assert FORMAT_REMINDER in joined, "每轮都必须带格式提醒"
+    assert "【输出规则】" in joined
+    # 仍然是两处：末尾 system + 用户消息文本末尾
+    assert str(payload["messages"][-1]["content"]).rstrip().endswith("不要写别的话。）")
 
 
 def test_reminder_never_reaches_memory(ready, fake_openai: FakeOpenAI) -> None:

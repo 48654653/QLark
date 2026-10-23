@@ -64,6 +64,10 @@ from .summarizer import (
 
 log = logging.getLogger(__name__)
 
+#: 语音朗读允许的语气标签。**只有两个** —— 标签越少模型挑得越准，
+#: 而且 QQ 聊天本来就不需要把每种情绪都演一遍。
+VOICE_EMOTIONS = ("开心", "嫌弃")
+
 #: 存进记忆的图片占位文本
 IMAGE_PLACEHOLDER = "[图片]"
 
@@ -100,6 +104,12 @@ class ReplyPlan:
     texts: list[str]
     meme: str | None = None
     image_path: Path | None = None
+    #: 这一轮走**语音**（已经合成好音频时 ``audio_path`` 才有值）
+    voice: bool = False
+    #: 朗读用的语气标签
+    emotion: str | None = None
+    #: 合成出来的语音文件；发出去之后会被删掉
+    audio_path: Path | None = None
     #: 实际调用模型的次数（含重新生成）
     calls: int = 1
     prompt_tokens: int = 0
@@ -476,21 +486,24 @@ class MessagePipeline:
         summary_text = self.store.summary_text(key)
         extra_system = [f"{SUMMARY_BLOCK_LABEL} {summary_text}"] if summary_text else []
 
-        # 随机分段 / 表情包：**骰子必须在组装提示词之前掷**。
-        # 没掷中的那一项，它的规则块根本不进提示词 —— 模型不知道有这个能力，
-        # 自然就不会用。这比在提示词里写"请你不要每次都这样"可靠一百倍。
+        # ---- 输出规则：**每一轮都发，永远不掷骰子** ----
         #
-        # 注意：骰子只决定"要不要加一个可选的东西"（表情、连发），**不决定内容质量**。
-        # 长度和语气交给「回复判断表」让模型按情境判断（见下方 REPLY_RUBRIC）。
-        allow_split, allow_meme, emotions, delay_ms = self._roll_expression(persona)
+        # v2 的核心变化。以前是"掷中了才把规则发给模型"，带来两个问题：
+        #   ① 骰子是上下文盲的（用户说「求你了」，骰到极短档就回一个「嗯」）
+        #   ② **能力不一致** —— 没掷中的轮次模型根本不知道自己能发图
+        #
+        # 现在规则永远在场，由模型自己判断要不要配表情、要不要发语音、要不要分段。
+        # 代价是失去固定频率控制，所以规则里给的是**判断标准**而不是概率。
+        emotions = self._meme_library().emotions() if persona.get("meme_enabled") else []
+        voice_on = self._voice_enabled(persona)
         rules = build_output_rules(
-            split=allow_split,
-            max_messages=self.settings.split_max_messages,
-            meme=allow_meme,
             emotions=emotions,
-            split_prompt=str(persona.get("split_prompt") or ""),
-            meme_prompt=str(persona.get("meme_prompt") or ""),
+            max_messages=self.settings.split_max_messages,
+            voice=voice_on,
+            voice_max_chars=self._setting_int("voice_max_chars", 20),
+            voice_emotions=VOICE_EMOTIONS,
         )
+        delay_ms = int(self._effective(persona, "split_delay_ms", self.settings.split_delay_ms))
 
         # 末尾指令（离生成点最近，位置决定效果）：
         #   ① 回复判断表 —— 教它按情境判断该回多长、该不该认真
@@ -498,15 +511,14 @@ class MessagePipeline:
         trailing_blocks: list[str] = []
         if bool(self.settings.get("reply_rubric_enabled", True)):
             trailing_blocks.append(REPLY_RUBRIC)
-        if rules:
-            extra_system.append(rules)
-            # 双保险：同一句提醒放**两处** —— 历史之后的 system、以及用户消息文本末尾。
-            #
-            # 为什么非放两处：只放末尾 system 实测约 83%，剩下的失败集中在
-            # "模型特别想表达"的那几句（辞职、相亲、工资）。两处都放 30/30 = 100%。
-            # 详见 reply_format.FORMAT_REMINDER 的说明。
-            trailing_blocks.append(FORMAT_REMINDER)
-            user_content = append_reminder(user_content)
+        extra_system.append(rules)
+        # 双保险：同一句提醒放**两处** —— 历史之后的 system、以及用户消息文本末尾。
+        #
+        # 为什么非放两处：只放末尾 system 实测约 83%，剩下的失败集中在
+        # "模型特别想表达"的那几句（辞职、相亲、工资）。两处都放 30/30 = 100%。
+        # 详见 reply_format.FORMAT_REMINDER 的说明。
+        trailing_blocks.append(FORMAT_REMINDER)
+        user_content = append_reminder(user_content)
         trailing_system = "\n\n".join(trailing_blocks)
 
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆
@@ -527,8 +539,7 @@ class MessagePipeline:
             messages,
             prepared,
             memory_text,
-            allow_split=allow_split,
-            allow_meme=allow_meme,
+            voice_on=voice_on,
             emotions=emotions,
             delay_ms=delay_ms,
         )
@@ -638,65 +649,31 @@ class MessagePipeline:
             return 0.0
         return max(0.0, min(1.0, value))
 
-    def _roll_length(self) -> str:
-        """（已废弃）回复长度档位 —— 永远返回 ``normal``。
+    def voice_prompt(self, persona: dict[str, Any] | None) -> str:
+        """这个角色的音色描述：人设上写了就用它的，没写用全局默认。"""
+        value = str((persona or {}).get("voice_prompt") or "").strip()
+        return value or str(self.settings.get("voice_prompt") or "").strip()
 
-        删掉的原因：**这是一个上下文盲的决定。** 它在生成之前就把长度定好了，
-        而"该回多长"完全取决于对方说了什么。真实的翻车场景：
-        对方说「求你了，不@他我就会死」，掷到极短档就回一个「嗯」——
-        这比说错话更伤人。
+    def _voice_enabled(self, persona: dict[str, Any] | None) -> bool:
+        """这个角色这一轮能不能发语音。
 
-        更根本的教训：**骰子只能决定"要不要加一个可选的东西"（表情、连发），
-        不能决定"这条回复好不好"（长度、语气）。** 表情配错了无伤大雅；
-        敷衍一个正在情绪里的人是真伤害。
+        总开关关着就一律不发；人设上没勾也一律不发；没有音色描述也不发
+        （否则合成出来的声音是随机的，不如不发）。
 
-        现在改由「回复判断表」（:data:`REPLY_RUBRIC`）让模型按情境自行判断。
-        保留这个方法只为兼容旧调用。
+        **v2 没有语音骰子** —— 要不要发由模型判断，这里只管"能不能"。
         """
-        return "normal"
+        if not bool(self.settings.get("voice_enabled", False)):
+            return False
+        if not (persona or {}).get("voice_enabled"):
+            return False
+        return bool(self.voice_prompt(persona))
 
-    def _roll_expression(
-        self, persona: dict[str, Any] | None, *, length_tier: str = "normal"
-    ) -> tuple[bool, bool, list[str], int]:
-        """掷骰子决定这一轮允不允许分段 / 配表情。
-
-        **随机的关键在这里，不在提示词里。** 只要把规则发给模型，它几乎每次都会
-        用；没掷中时规则根本不进提示词，模型不知道有这个能力，自然就不用。
-
-        分段和表情**各自独立掷**：这样才能出现"只发一条但配个表情"这种自然行为。
-
-        Args:
-            length_tier: 已废弃，保留参数只为兼容旧调用。
-
-        Returns:
-            ``(允许分段, 允许表情, 可用情绪, 多段连发间隔毫秒)``
-        """
-        _ = length_tier
-        split_on = bool(persona.get("split_enabled")) if persona else False
-        meme_on = bool(persona.get("meme_enabled")) if persona else False
-
-        emotions: list[str] = []
-        if meme_on:
-            emotions = self._meme_library().emotions()
-            if not emotions:
-                self._log(
-                    "人设启用了表情包，但表情目录里没有可用图片，本轮不配表情"
-                    f"（{self._meme_library().describe()}）",
-                    level="warn",
-                )
-                meme_on = False
-
-        split_chance = float(self._effective(persona, "split_chance", self.settings.split_chance))
-        meme_chance = float(self._effective(persona, "meme_chance", self.settings.meme_chance))
-        delay_ms = int(self._effective(persona, "split_delay_ms", self.settings.split_delay_ms))
-
-        allow_split = split_on and random.random() < split_chance
-        allow_meme = meme_on and random.random() < meme_chance
-        if allow_split:
-            self._log("本轮允许分段回复", level="debug")
-        if allow_meme:
-            self._log("本轮允许配表情", level="debug")
-        return allow_split, allow_meme, emotions, delay_ms
+    def _setting_int(self, key: str, fallback: int) -> int:
+        """读一个整数配置；类型不对就用默认值（DB 里可能存着字符串）。"""
+        try:
+            return int(float(self.settings.get(key, fallback)))
+        except (TypeError, ValueError):
+            return fallback
 
     def _plan_reply(
         self,
@@ -705,19 +682,20 @@ class MessagePipeline:
         prepared: list[PreparedImage],
         memory_text: str,
         *,
-        allow_split: bool,
-        allow_meme: bool,
-        emotions: list[str],
+        voice_on: bool = False,
+        emotions: list[str] | None = None,
         delay_ms: int = 0,
     ) -> ReplyPlan:
         """调用模型 → 解析 → 重新生成 → 抢救 → 兜底，产出一份"要发什么"的计划。"""
         spec = {
-            # 提示词里要求了 JSON 才按 JSON 校验；两个都关时模型就该输出普通文本
-            "expect_json": allow_split or allow_meme,
-            "allow_split": allow_split,
-            "allow_meme": allow_meme,
+            # v2：规则每一轮都在，所以**永远按 JSON 校验**。
+            # 模型输出非 JSON 才算失败（会重试一次再抢救）。
+            "expect_json": True,
             "max_messages": self.settings.split_max_messages,
-            "emotions": emotions,
+            "emotions": emotions or [],
+            "allow_voice": voice_on,
+            "voice_max_chars": self._setting_int("voice_max_chars", 20),
+            "voice_emotions": VOICE_EMOTIONS,
         }
         result = self._complete_with_vision_fallback(persona, messages, prepared, memory_text)
         parsed = parse_reply(result.text, **spec)
@@ -731,6 +709,8 @@ class MessagePipeline:
         if parsed.ok:
             plan.texts = parsed.messages
             plan.meme = parsed.meme
+            plan.voice = parsed.voice
+            plan.emotion = parsed.emotion
             self._attach_meme(plan)
             return plan
 
@@ -771,6 +751,8 @@ class MessagePipeline:
             if parsed.ok:
                 plan.texts = parsed.messages
                 plan.meme = parsed.meme
+                plan.voice = parsed.voice
+                plan.emotion = parsed.emotion
                 self._attach_meme(plan)
                 return plan
 

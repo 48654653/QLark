@@ -235,59 +235,75 @@ def _fill(template: str, **values: Any) -> str:
 
 def build_output_rules(
     *,
-    split: bool,
-    max_messages: int,
-    meme: bool,
     emotions: Sequence[str],
-    split_prompt: str = "",
-    meme_prompt: str = "",
+    max_messages: int = 3,
+    voice: bool = False,
+    voice_max_chars: int = 20,
+    voice_emotions: Sequence[str] = ("开心", "嫌弃"),
 ) -> str:
-    """拼出注入 system 的【输出规则】块。
+    """拼出注入 system 的【输出规则】块。**永远是 JSON，永远非空。**
 
-    两个功能都关时返回**空串** —— 一个字都不提，模型自然输出普通文本。
-    这是"关掉之后不会被带跑"的第一道保障。
+    v2 的重大变化：**不再有骰子。** 以前是"掷中了才把规则发给模型，命令它照做"，
+    现在规则**每一轮都在**，由模型自己判断要不要配表情、要不要发语音、要不要分段。
 
-    Args:
-        split_prompt: 人设里自定义的「多段对话」提示词；留空用
-            :data:`SPLIT_RULE_DEFAULT`。
-        meme_prompt: 同上，对应 :data:`MEME_RULE_DEFAULT`。
+    为什么改：
+      · 骰子是上下文盲的（用户说「求你了」，骰到极短档就回一个「嗯」）
+      · 更糟的是**能力不一致** —— 没掷中的轮次，模型根本不知道自己能发图，
+        用户明确要求发图时它只能干巴巴回一句文字
+
+    代价是失去了固定频率控制，所以提示词里必须给**判断标准**而不是概率：
+    写"平时一条就够""看你这句话有没有合适的情绪"，而不是"请写成 2 条"。
 
     .. important::
-       **骰子已经掷过了，这里是命令式，不是许可式。**
-
-       踩过的坑：第一版写的是"默认只写 1 条 / 多数时候不要填"，
-       结果模型老老实实照办 —— 骰子明明掷中了，它还是只发一条、不配表情，
-       实际触发率接近 0。**随机该由代码负责，提示词一旦开了口子，
-       频率就失控了**：要么像那样几乎不触发，要么（如果不加约束）每次都触发。
-       所以这里要直接说"请写成几条 / 请配一个表情"。
+       旧版是命令式（"本轮请写成 2 条"），因为那时骰子已经替模型决定过了。
+       现在没有骰子，**任何命令式措辞都会导致每次都触发**。
     """
-    if not split and not meme:
-        return ""
-
     limit = max(1, int(max_messages))
     lines: list[str] = [OUTPUT_RULES_TITLE]
     lines.append("你必须只输出一个 JSON 对象，不要有任何其它文字，也不要用代码块包裹。")
-    lines.append('格式：{"messages": ["第一条"], "meme": "表情名"}')
+    lines.append(
+        '格式：{"messages": ["第一句"], "meme": "表情名", "voice": false, "emotion": "开心"}'
+    )
     lines.append("")
 
-    # ---- ① messages ----
-    if split and limit > 1:
-        body = _fill(
-            split_prompt or SPLIT_RULE_DEFAULT,
-            max_messages=limit,
-            chars=SUGGESTED_MESSAGE_CHARS,
+    # ---- ① messages（条数由模型决定）----
+    lines.append("1. messages：必填，你要说的话，每条一个字符串。")
+    if limit > 1:
+        lines.append(
+            f"   **平时一条就够。** 只有真的想分成两口气说的时候才写两条"
+            f"（比如先应一声再补一句）。最多 {limit} 条。别为了分段而分段，那是刷屏。"
         )
     else:
-        body = SINGLE_MESSAGE_RULE
-    lines.append(f"1. messages：必填，你要说的话，每条一个字符串。")
-    lines.append(body)
+        lines.append("   只能写 1 条。")
 
-    # ---- ② meme ----
-    if meme:
-        names = "、".join(str(name) for name in emotions)
-        lines.append(f"2. meme：选填。" + _fill(meme_prompt or MEME_RULE_DEFAULT, emotions=names))
+    # ---- ② meme（可选）----
+    names = "、".join(str(name) for name in emotions)
+    if names:
+        lines.append(
+            f"2. meme：选填。想配表情就写表情名，不想配就写 null。"
+            f"只能从这些里原样挑一个：{names}。"
+            f"像真人一样——有时配，有时不配，看你这句话有没有合适的情绪。"
+            f"名字必须和列表里一模一样，不要自创、不要翻译。"
+        )
     else:
-        lines.append(f"2. {NO_MEME_RULE}")
+        lines.append("2. meme：固定写 null（当前没有可用表情）。")
+
+    # ---- ③ voice（可选）----
+    if voice:
+        mood = "、".join(str(name) for name in voice_emotions)
+        lines.append(
+            f"3. voice：填 true 表示这一句用**语音**发出去。"
+            f"只在「这句话很短（{voice_max_chars} 字以内）而且用声音说出来更自然」时才填 true。"
+            f"长句子不要用语音——没人愿意听 20 秒。"
+            f"voice 为 true 时 messages 只能写 1 条。"
+        )
+        lines.append(
+            f"4. emotion：voice 为 true 时必须填，决定朗读语气。"
+            f"只能从这些里选：{mood}。voice 为 false 时可以省略。"
+        )
+    else:
+        lines.append("3. voice：固定写 false。")
+        lines.append("4. emotion：可以省略。")
 
     return "\n".join(lines)
 
@@ -303,6 +319,10 @@ class ParsedReply:
     ok: bool
     messages: list[str] = field(default_factory=list)
     meme: str | None = None
+    #: 模型要求这条回复用**语音**发出去（并且它给了多段时以第一段为准）
+    voice: bool = False
+    #: 朗读时的语气标签，例如「开心」「嫌弃」；缺省当「开心」
+    emotion: str | None = None
     #: json | repaired | salvaged | plain
     mode: str = "plain"
     error: str | None = None
@@ -416,26 +436,31 @@ def _candidates(text: str) -> list[tuple[str, str]]:
 def parse_reply(
     text: str,
     *,
-    expect_json: bool,
-    allow_split: bool,
-    allow_meme: bool,
-    max_messages: int = 2,
+    expect_json: bool = True,
+    max_messages: int = 3,
     emotions: Sequence[str] = (),
+    allow_split: bool = True,
+    allow_meme: bool = True,
+    allow_voice: bool = False,
+    voice_max_chars: int = 20,
+    voice_emotions: Sequence[str] = ("开心", "嫌弃"),
 ) -> ParsedReply:
-    """解析模型输出。**永远调用它**，与功能开关无关。
+    """解析模型输出。**永远调用它。**
 
     Args:
-        expect_json: 提示词里**有没有要求** JSON。两个功能都关时是 ``False`` ——
-            那种情况下模型本来就该输出普通文本，把它当"格式错误"去重试/兜底
-            是错的（会让每一句回复都白跑一次重试）。
-        allow_split: 关掉时，即使模型给了多条也**合并成一条**发出去 ——
-            用户关了分段，就不该收到多条消息。
+        expect_json: 提示词里有没有要求 JSON。v2 起**总是 True**（规则永远在场）；
+            保留这个参数是为了兼容"输出规则整块关掉"的调试场景。
+        allow_split: 关掉时把多条合并成一条 —— 这是**护栏**，不是骰子。
         allow_meme: 关掉时忽略 ``meme``。
-        emotions: 当前可用的情绪名，用来校验模型有没有瞎编。
+        allow_voice: 这个角色允不允许发语音。
+        voice_max_chars: 语音的字数上限。超过就忽略 ``voice``（发文字）——
+            实测 46 字要念 21 秒，长语音没人听。
+        voice_emotions: 允许的朗读语气，不认识的回落到第一个。
 
-    注意：**不管 expect_json 是什么，都会先试一次 JSON 解析**。万一模型自发
-    输出了合法的 ``{"messages": [...]}``，也会被拆成普通文本再发、再落库 ——
-    这样 JSON 泄漏到聊天界面和记忆里在结构上就不可能发生。
+    语音的两个护栏（**不是骰子，是防模型越界**）：
+      · 只允许 1 条消息（语音是一整段音频）
+      · 字数不超过 ``voice_max_chars``
+    只要有一条不满足，就忽略 ``voice`` 按文字发 —— **绝不删内容去迁就格式**。
     """
     raw = str(text or "")
     if not raw.strip():
@@ -468,7 +493,7 @@ def parse_reply(
         if meme and emotions:
             matched = _match_emotion(meme, emotions)
             if matched is None:
-                log.info("模型给的表情 %r 不在可用列表里，已忽略", meme)
+                log.info("模型给的表情 %r 不在可用列表里，本轮不配图", meme)
                 meme = None
             else:
                 meme = matched
@@ -477,10 +502,29 @@ def parse_reply(
             # 关了分段就合并成一条：用换行保留原来的断句，比硬拼自然
             messages = ["\n".join(messages)]
 
+        # ---- 语音护栏 ----
+        voice = _as_bool(payload.get("voice"))
+        emotion = _as_emotion(payload.get("emotion"), voice_emotions)
+        if voice:
+            joined = "\n".join(messages)
+            if not allow_voice:
+                voice = False
+            elif len(messages) > 1:
+                log.info("模型要求语音但给了 %d 条消息，按文字发", len(messages))
+                voice = False
+            elif len(joined) > voice_max_chars:
+                log.info(
+                    "模型要求语音但这句话有 %d 字（上限 %d），按文字发",
+                    len(joined), voice_max_chars,
+                )
+                voice = False
+
         return ParsedReply(
             ok=True,
             messages=messages,
             meme=meme if allow_meme else None,
+            voice=voice,
+            emotion=emotion if voice else None,
             mode=mode,
             raw=raw,
         )
@@ -492,6 +536,31 @@ def parse_reply(
 
     detail = errors[0] if errors else "不是合法的 JSON 对象"
     return ParsedReply(ok=False, mode="plain", error=detail, raw=raw)
+
+
+def _as_bool(value: Any) -> bool:
+    """把模型写的 ``true`` / ``"true"`` / ``"是"`` 之类统一成布尔。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value or "").strip().lower()
+    return text in {"true", "1", "yes", "y", "是", "要", "用"}
+
+
+def _as_emotion(value: Any, allowed: Sequence[str]) -> str | None:
+    """校验朗读语气；不认识的回落到第一个（默认「开心」）。"""
+    names = [str(name) for name in allowed] or ["开心"]
+    wanted = str(value or "").strip()
+    if not wanted:
+        return names[0]
+    for name in names:
+        if wanted == name:
+            return name
+    for name in names:
+        if name in wanted or wanted in name:
+            return name
+    return names[0]
 
 
 def _match_emotion(name: str, emotions: Sequence[str]) -> str | None:
