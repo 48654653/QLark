@@ -59,6 +59,10 @@ MODEL_FIELDS = (
     "voice_enabled",
     "voice_max_chars",
     "tts_model",
+    # v2.1：@ 激活保活 + 引用消息
+    "keepalive_enabled",
+    "keepalive_seconds",
+    "quote_context_enabled",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -114,6 +118,9 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "voice_max_chars": settings.get("voice_max_chars"),
         "tts_model": str(settings.get("tts_model") or ""),
         "voice_prompt": str(settings.get("voice_prompt") or ""),
+        "keepalive_enabled": bool(settings.get("keepalive_enabled", True)),
+        "keepalive_seconds": settings.get("keepalive_seconds"),
+        "quote_context_enabled": bool(settings.get("quote_context_enabled", True)),
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -343,7 +350,10 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["reply_rubric_enabled"] = bool(payload["reply_rubric_enabled"])
     if "voice_enabled" in payload:
         updates["voice_enabled"] = bool(payload["voice_enabled"])
-    for key in ("voice_max_chars",):
+    for key in ("keepalive_enabled", "quote_context_enabled"):
+        if key in payload:
+            updates[key] = bool(payload[key])
+    for key in ("voice_max_chars", "keepalive_seconds"):
         if key in payload:
             updates[key] = _as_int(payload[key])
     for key in ("tts_model",):

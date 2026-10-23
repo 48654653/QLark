@@ -50,6 +50,9 @@ from .memes import MemeLibrary, resolve_dir as resolve_meme_dir
 from .moderation import RateLimiter, find_blocked_word
 from .personas import PersonaStore
 from .queue import SessionQueue
+from .keepalive import KeepAlive
+from .quoted import MAX_RENDER_CHARS as MAX_QUOTED_CHARS
+from .quoted import QuotedContent, QuotedFetcher
 from .reply_format import (
     FORMAT_REMINDER,
     REPLY_RUBRIC,
@@ -249,6 +252,8 @@ class PipelineStats:
     splits: int = 0
     #: v2：模型要求语音但合成失败、降级成文字的次数
     voice_fallbacks: int = 0
+    #: v2.1：成功取回被引用内容的次数
+    quotes: int = 0
     last_error: str | None = None
     last_reply_at: float | None = None
 
@@ -270,6 +275,7 @@ class PipelineStats:
             "memes": self.memes,
             "splits": self.splits,
             "voice_fallbacks": self.voice_fallbacks,
+            "quotes": self.quotes,
             "last_error": self.last_error,
             "last_reply_at": self.last_reply_at,
         }
@@ -327,6 +333,13 @@ class MessagePipeline:
         self._ob_cache: tuple[tuple[str, str], OneBotClient] | None = None
         #: 语音合成客户端（TTS 出错后不缓存，下次重新构造）
         self._tts_client: VoiceDesignClient | None = None
+        #: @ 激活保活：被 @ 之后的一段时间内，那个人不必再 @ 也能接着聊。
+        #: **按 (会话, 用户) 独立** —— 别人说话续不了你的窗口。
+        self._keepalive = KeepAlive(
+            seconds=self._setting_int("keepalive_seconds", 60)
+        )
+        #: 引用消息取回器（懒构造，取不到内容时不影响后续）
+        self._quoted_fetcher: QuotedFetcher | None = None
 
     # ================================================================== 生命周期
     def start(self) -> None:
@@ -447,11 +460,54 @@ class MessagePipeline:
         return True
 
     def _is_triggered(self, event: MessageEvent, parsed: ParsedMessage) -> bool:
-        """群聊必须 @ 机器人；私聊一律触发。"""
+        """判断这一条要不要回复。
+
+        群聊的规则（v2.1）：
+          ① 私聊一律回
+          ② @ 了机器人 → 回，并**开启/刷新**这个人的保活窗口
+          ③ 没 @ 但**这个人**的窗口还有效 → 回，并**续期**
+          ④ 其它 → 不理
+
+        .. important::
+           窗口是 ``(会话, 用户)`` 独立的。别人说话既不能续期、也不能蹭用 ——
+           否则群里一直有人说话，窗口就永远不关，机器人会变成每句都插嘴。
+
+        Args:
+            会就地修改保活状态（这是它的副作用，刻意为之：判断和续期本就该同时发生）。
+        """
         if not event.is_group:
             return True
+
         self_id = event.self_id or self.settings.qq_account or ""
-        return parsed.mentions_bot or (bool(self_id) and self_id in parsed.ats)
+        mentioned = parsed.mentions_bot or (bool(self_id) and self_id in parsed.ats)
+        session = event.session_id
+        speaker = str(event.user_id or "")
+
+        if mentioned:
+            if self._keepalive_on():
+                self._keepalive.arm(session, speaker)
+            return True
+
+        if not self._keepalive_on() or not self._keepalive.active(session, speaker):
+            return False
+
+        # 窗口内：续期，并照常回复
+        self._keepalive.touch(session, speaker)
+        remaining = self._keepalive.remaining(session, speaker)
+        self._log(
+            f"{speaker} 的 @ 保活还有 {remaining:.0f} 秒，本条按继续对话处理",
+            level="debug",
+        )
+        return True
+
+    def _keepalive_on(self) -> bool:
+        if not bool(self.settings.get("keepalive_enabled", True)):
+            return False
+        seconds = self._setting_int("keepalive_seconds", 60)
+        if seconds != int(self._keepalive.seconds):
+            # 配置改了就地生效，不用重启
+            self._keepalive.set_seconds(seconds)
+        return True
 
     # ================================================================== 处理
     def _handle(self, event: MessageEvent, parsed: ParsedMessage) -> None:
@@ -532,11 +588,34 @@ class MessagePipeline:
             prepared = self._prepare_images(parsed)
             media_names = self._save_media(prepared)
 
+        # ---- 引用消息：把被引用的那条取回来看得见 ----
+        #
+        # OneBot 的 reply 段**只带消息 ID**，内容得回头调 get_msg 取；
+        # 转发聊天记录还要再展开一层。取不到就安静跳过 —— 引用是锦上添花，
+        # 不能因为对方删了原消息就把这条回复卡死。
+        quoted = self._quoted_content(parsed)
+        if quoted.images:
+            extra, problems = self._images.prepare_all(
+                quoted.images,
+                limit=len(quoted.images),
+                resolve=self._resolve_image_file,
+            )
+            if problems:
+                self._log("引用里的部分图片未能处理：" + "；".join(problems), level="warn")
+            prepared.extend(extra)
+
+        # 被引用的内容拼在用户话的前面，模型才看得懂"他指的是哪条"
+        visible_text = _strip_image_placeholders(parsed.text)
+        if quoted.text:
+            block = f"【引用了这条消息】{quoted.text}"
+            visible_text = f"{block}\n{visible_text}" if visible_text else block
+
         if prepared:
-            # 多模态：文本里那条 [图片] 占位要去掉，否则模型会看到"占位 + 真图"
-            visible = _strip_image_placeholders(parsed.text) or "请看这张图片。"
+            visible = visible_text or "请看这张图片。"
             visible = self._label_message(event, visible)
             user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
+        elif quoted.text:
+            user_content = self._label_message(event, visible_text)
         else:
             user_content = memory_text
 
@@ -1134,6 +1213,33 @@ class MessagePipeline:
         return client
 
     # ------------------------------------------------------------------ 图片
+    def _quoted_content(self, parsed: ParsedMessage) -> QuotedContent:
+        """取回被引用的消息内容。取不到就返回空（安静降级）。"""
+        if not parsed.reply_id:
+            return QuotedContent()
+        if not bool(self.settings.get("quote_context_enabled", True)):
+            return QuotedContent()
+        fetcher = self._quoted_fetcher
+        if fetcher is None:
+            fetcher = QuotedFetcher(self._onebot, max_chars=MAX_QUOTED_CHARS)
+            self._quoted_fetcher = fetcher
+        try:
+            content = fetcher.fetch(str(parsed.reply_id))
+        except Exception as exc:  # noqa: BLE001 兜底：引用绝不能拖垮回复
+            log.exception("引用消息处理未预期失败")
+            self._log(f"引用消息处理失败，忽略引用：{exc}", level="warn")
+            return QuotedContent()
+        if content.ok:
+            self.stats.quotes += 1
+            self._log(
+                f"引用消息已取回（{len(content.text)} 字，"
+                f"{len(content.images)} 张图，类型：{'/'.join(content.kinds) or '无'}）",
+                level="debug",
+            )
+        else:
+            self._log(f"引用消息取不到内容（id={parsed.reply_id}），按无引用处理", level="debug")
+        return content
+
     def _prepare_images(self, parsed: ParsedMessage) -> list[PreparedImage]:
         """立即下载并预处理图片；任何一张失败都不影响其余。"""
         if not bool(self.settings.get("image_understanding", True)):

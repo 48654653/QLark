@@ -121,6 +121,9 @@
     eMemeDir: $('eMemeDir'),
     bReplyRubric: $('bReplyRubric'),
     bVoiceEnabled: $('bVoiceEnabled'),
+    bKeepaliveEnabled: $('bKeepaliveEnabled'),
+    bKeepaliveSeconds: $('bKeepaliveSeconds'), eKeepaliveSeconds: $('eKeepaliveSeconds'),
+    bQuoteContext: $('bQuoteContext'),
     bVoiceMaxChars: $('bVoiceMaxChars'), eVoiceMaxChars: $('eVoiceMaxChars'),
     bTtsModel: $('bTtsModel'), eTtsModel: $('eTtsModel'),
     bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
@@ -1252,6 +1255,9 @@
     paintChanceOverrides(cfg.chance_overrides);
     dom.bReplyRubric.checked = cfg.reply_rubric_enabled !== false;
     dom.bVoiceEnabled.checked = !!cfg.voice_enabled;
+    dom.bKeepaliveEnabled.checked = cfg.keepalive_enabled !== false;
+    dom.bKeepaliveSeconds.value = String(cfg.keepalive_seconds || 60);
+    dom.bQuoteContext.checked = cfg.quote_context_enabled !== false;
     dom.bVoiceMaxChars.value = String(cfg.voice_max_chars || 20);
     dom.bTtsModel.value = cfg.tts_model || '';
     dom.bSplitMax.value = String(cfg.split_max_messages);
@@ -1304,6 +1310,9 @@
     // 界面用百分比，后端存 0~1
     payload.reply_rubric_enabled = !!dom.bReplyRubric.checked;
     payload.voice_enabled = !!dom.bVoiceEnabled.checked;
+    payload.keepalive_enabled = !!dom.bKeepaliveEnabled.checked;
+    payload.keepalive_seconds = inputNum(dom.bKeepaliveSeconds);
+    payload.quote_context_enabled = !!dom.bQuoteContext.checked;
     payload.voice_max_chars = inputNum(dom.bVoiceMaxChars);
     payload.tts_model = dom.bTtsModel.value.trim();
     payload.split_max_messages = inputNum(dom.bSplitMax);

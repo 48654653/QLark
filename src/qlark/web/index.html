@@ -496,6 +496,33 @@
             </div>
 
             <div class="field">
+              <span class="field-label">@ 激活保活</span>
+              <label class="switch">
+                <input type="checkbox" id="bKeepaliveEnabled">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">@ 一次之后，一段时间内不用再 @</span>
+              </label>
+              <span class="field-hint">**只对被 @ 的那个人有效**：别人说话既不能给他续期，也不能蹭用他的窗口 —— 否则群里一直有人说话，窗口就永远不关，机器人会变成每句都插嘴</span>
+            </div>
+
+            <label class="field">
+              <span class="field-label">保活时长（秒）</span>
+              <input class="input" id="bKeepaliveSeconds" type="number" min="5" max="600" step="5" inputmode="numeric" placeholder="60">
+              <span class="field-hint">他每说一句话都会刷新这个时长；静默满这么久，窗口自动关闭</span>
+              <span class="field-err" id="eKeepaliveSeconds" hidden></span>
+            </label>
+
+            <div class="field">
+              <span class="field-label">引用消息</span>
+              <label class="switch">
+                <input type="checkbox" id="bQuoteContext">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">让机器人看到被引用的内容</span>
+              </label>
+              <span class="field-hint">别人引用一条消息再说话时，文字、图片、视频、转发的聊天记录都会取回来给它看。取不到（比如原消息被删了）就当作没有引用，不会卡住回复</span>
+            </div>
+
+            <div class="field">
               <span class="field-label">语音回复</span>
               <label class="switch">
                 <input type="checkbox" id="bVoiceEnabled">
