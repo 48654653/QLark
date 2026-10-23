@@ -617,3 +617,71 @@ def test_preset_text_lookup() -> None:
     assert preset_text(SPLIT_PRESETS, "escalate") == SPLIT_PRESETS[1]["text"]
     assert preset_text(SPLIT_PRESETS, "") == ""
     assert preset_text(SPLIT_PRESETS, "并不存在") == ""
+
+
+# --------------------------------------------------------------------------- #
+# 表情的出现频率：靠提示词压，不靠代码拦
+# --------------------------------------------------------------------------- #
+def _rules(**kwargs):
+    from qlark.chat.reply_format import build_output_rules
+
+    options = {"emotions": ["嫌弃", "哭哭", "打你"], "max_messages": 3}
+    options.update(kwargs)
+    return build_output_rules(**options)
+
+
+def test_meme_example_defaults_to_null() -> None:
+    """**示例里必须写 null。** 这是最强的那根杠杆。
+
+    以前示例写的是 ``"meme": "表情名"``，模型就把"补一个表情"当成常规动作，
+    几乎每句都配 —— 实测就是这样，出现率高得不真实。
+    """
+    text = _rules()
+    assert '"meme": null' in text
+    assert '"meme": "表情名"' not in text
+
+
+def test_meme_rule_requires_strong_emotion() -> None:
+    text = _rules()
+    assert "绝大多数时候写 null" in text, "默认值必须说清楚是 null"
+    assert "情绪真的强烈" in text, "只有情绪强烈才配"
+    assert "拿不准就写 null" in text, "要给模型一个保守的退路"
+
+
+def test_meme_rule_names_what_does_not_deserve_one() -> None:
+    """得点名"哪些情况不配"，只说"看情绪"模型会理解成"总能找到合适的情绪"。"""
+    text = _rules()
+    assert "陈述" in text and "问句" in text and "寒暄" in text
+
+
+def test_meme_rule_has_no_numbers() -> None:
+    """频次交给模型判断，**不给具体次数或百分比**。"""
+    text = _rules()
+    meme_line = next(line for line in text.splitlines() if line.startswith("2. meme"))
+    for token in ("%", "概率", "每 10", "每10", "十分之", "三分之一"):
+        assert token not in meme_line, f"表情规则里不该出现 {token!r}：{meme_line}"
+
+
+def test_no_meme_rule_still_forbids_it() -> None:
+    """没有可用表情时要明确禁止，不能让模型自己编一个名字。"""
+    text = _rules(emotions=[])
+    assert "固定写 null" in text
+
+
+def test_meme_rule_states_the_capability() -> None:
+    """必须**告诉模型它发得了图**。
+
+    实际踩过的坑：模型一边填 ``"meme": "嫌弃"`` 一边在正文里说
+    「本鲸根本发不了图」—— 因为它不知道这个键真的会发一张图出去。
+    而且这句话进了历史之后还会自我强化，越聊越确信，跟用户怎么说都没用。
+    """
+    text = _rules()
+    assert "真的会有一张图" in text, "要说清楚填了就是真的发图"
+    assert "你发得了图" in text, "要正面告诉它这个能力"
+    assert "别在 messages 里说" in text, "要禁止正文里否认这个能力"
+
+
+def test_meme_rule_is_absent_when_no_emotions() -> None:
+    """没有表情目录时不该出现能力描述 —— 否则它以为自己能发却没有可选的名字。"""
+    text = _rules(emotions=[])
+    assert "你发得了图" not in text
