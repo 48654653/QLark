@@ -523,6 +523,31 @@
             </div>
 
             <div class="field">
+              <span class="field-label">合并连发消息</span>
+              <label class="switch">
+                <input type="checkbox" id="bCoalesceEnabled">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">把连着的几条合成一条再回</span>
+              </label>
+              <span class="field-hint">有人习惯把一句话拆成好几条发（"在" "吗" "问个事"）。每条都回会变成「咋了 / 嗯？ / 说」三连，一眼是机器人。**只对免@ 的消息生效**，@ 了还是立刻回</span>
+            </div>
+
+            <div class="row-2">
+              <label class="field">
+                <span class="field-label">静默多久算说完（秒）</span>
+                <input class="input" id="bCoalesceQuiet" type="number" min="1" max="30" step="1" inputmode="numeric" placeholder="3">
+                <span class="field-hint">对方停下这么久就把这一批发出去。**每来一条会重新计时**</span>
+                <span class="field-err" id="eCoalesceQuiet" hidden></span>
+              </label>
+              <label class="field">
+                <span class="field-label">最长等多久（秒）</span>
+                <input class="input" id="bCoalesceMax" type="number" min="3" max="120" step="1" inputmode="numeric" placeholder="15">
+                <span class="field-hint">从第一条算起的硬上限。防止对方一直打字，机器人永远不吭声</span>
+                <span class="field-err" id="eCoalesceMax" hidden></span>
+              </label>
+            </div>
+
+            <div class="field">
               <span class="field-label">语音回复</span>
               <label class="switch">
                 <input type="checkbox" id="bVoiceEnabled">

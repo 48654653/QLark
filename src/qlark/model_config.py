@@ -63,6 +63,10 @@ MODEL_FIELDS = (
     "keepalive_enabled",
     "keepalive_seconds",
     "quote_context_enabled",
+    # v2.2：免@ 消息的合并
+    "coalesce_enabled",
+    "coalesce_quiet_seconds",
+    "coalesce_max_seconds",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -121,6 +125,9 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "keepalive_enabled": bool(settings.get("keepalive_enabled", True)),
         "keepalive_seconds": settings.get("keepalive_seconds"),
         "quote_context_enabled": bool(settings.get("quote_context_enabled", True)),
+        "coalesce_enabled": bool(settings.get("coalesce_enabled", True)),
+        "coalesce_quiet_seconds": settings.get("coalesce_quiet_seconds"),
+        "coalesce_max_seconds": settings.get("coalesce_max_seconds"),
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -350,10 +357,15 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
         updates["reply_rubric_enabled"] = bool(payload["reply_rubric_enabled"])
     if "voice_enabled" in payload:
         updates["voice_enabled"] = bool(payload["voice_enabled"])
-    for key in ("keepalive_enabled", "quote_context_enabled"):
+    for key in ("keepalive_enabled", "quote_context_enabled", "coalesce_enabled"):
         if key in payload:
             updates[key] = bool(payload[key])
-    for key in ("voice_max_chars", "keepalive_seconds"):
+    for key in (
+        "voice_max_chars",
+        "keepalive_seconds",
+        "coalesce_quiet_seconds",
+        "coalesce_max_seconds",
+    ):
         if key in payload:
             updates[key] = _as_int(payload[key])
     for key in ("tts_model",):

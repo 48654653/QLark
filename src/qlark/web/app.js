@@ -124,6 +124,9 @@
     bKeepaliveEnabled: $('bKeepaliveEnabled'),
     bKeepaliveSeconds: $('bKeepaliveSeconds'), eKeepaliveSeconds: $('eKeepaliveSeconds'),
     bQuoteContext: $('bQuoteContext'),
+    bCoalesceEnabled: $('bCoalesceEnabled'),
+    bCoalesceQuiet: $('bCoalesceQuiet'), eCoalesceQuiet: $('eCoalesceQuiet'),
+    bCoalesceMax: $('bCoalesceMax'), eCoalesceMax: $('eCoalesceMax'),
     bVoiceMaxChars: $('bVoiceMaxChars'), eVoiceMaxChars: $('eVoiceMaxChars'),
     bTtsModel: $('bTtsModel'), eTtsModel: $('eTtsModel'),
     bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
@@ -1183,6 +1186,9 @@
       keepalive_enabled: (s.keepalive_enabled === undefined) ? true : !!s.keepalive_enabled,
       keepalive_seconds: numOr(s.keepalive_seconds, 60),
       quote_context_enabled: (s.quote_context_enabled === undefined) ? true : !!s.quote_context_enabled,
+      coalesce_enabled: (s.coalesce_enabled === undefined) ? true : !!s.coalesce_enabled,
+      coalesce_quiet_seconds: numOr(s.coalesce_quiet_seconds, 3),
+      coalesce_max_seconds: numOr(s.coalesce_max_seconds, 15),
       meme_dir: String(s.meme_dir || ''),
       meme_dir_effective: String(s.meme_dir_effective || ''),
       meme_dir_available: !!s.meme_dir_available,
@@ -1270,6 +1276,9 @@
     dom.bKeepaliveEnabled.checked = cfg.keepalive_enabled !== false;
     dom.bKeepaliveSeconds.value = String(cfg.keepalive_seconds || 60);
     dom.bQuoteContext.checked = cfg.quote_context_enabled !== false;
+    dom.bCoalesceEnabled.checked = cfg.coalesce_enabled !== false;
+    dom.bCoalesceQuiet.value = String(cfg.coalesce_quiet_seconds || 3);
+    dom.bCoalesceMax.value = String(cfg.coalesce_max_seconds || 15);
     dom.bVoiceMaxChars.value = String(cfg.voice_max_chars || 20);
     dom.bTtsModel.value = cfg.tts_model || '';
     dom.bSplitMax.value = String(cfg.split_max_messages);
@@ -1325,6 +1334,9 @@
     payload.keepalive_enabled = !!dom.bKeepaliveEnabled.checked;
     payload.keepalive_seconds = inputNum(dom.bKeepaliveSeconds);
     payload.quote_context_enabled = !!dom.bQuoteContext.checked;
+    payload.coalesce_enabled = !!dom.bCoalesceEnabled.checked;
+    payload.coalesce_quiet_seconds = inputNum(dom.bCoalesceQuiet);
+    payload.coalesce_max_seconds = inputNum(dom.bCoalesceMax);
     payload.voice_max_chars = inputNum(dom.bVoiceMaxChars);
     payload.tts_model = dom.bTtsModel.value.trim();
     payload.split_max_messages = inputNum(dom.bSplitMax);

@@ -19,7 +19,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -50,6 +50,7 @@ from .memes import MemeLibrary, resolve_dir as resolve_meme_dir
 from .moderation import RateLimiter, find_blocked_word
 from .personas import PersonaStore
 from .queue import SessionQueue
+from .coalesce import Coalescer
 from .keepalive import KeepAlive
 from .quoted import MAX_RENDER_CHARS as MAX_QUOTED_CHARS
 from .quoted import QuotedContent, QuotedFetcher
@@ -152,6 +153,46 @@ class ReplyPlan:
         if raw:
             return raw
         return compose_memory_text(self.texts)
+
+
+def _merge_batch(
+    items: list[tuple[MessageEvent, ParsedMessage]],
+) -> tuple[MessageEvent, ParsedMessage]:
+    """把一批碎片合并成一条消息。
+
+    · 文本：每个碎片**一行**（保留"他是一句一句发的"这个信息）
+    · 图片：取并集
+    · 引用：取**最后一条**非空的（他引用的是最关心的那条）
+    · @ / 事件本身：用最后一条的（时间、消息 ID 都以最新为准）
+    """
+    if len(items) == 1:
+        return items[0]
+
+    event, last = items[-1]
+    lines: list[str] = []
+    images: list[Any] = []
+    ats: list[str] = []
+    reply_id: str | None = None
+    mentioned = False
+    for _, parsed in items:
+        text = parsed.text_for_memory().strip()
+        if text:
+            lines.append(text)
+        images.extend(parsed.images)
+        ats.extend(parsed.ats)
+        if parsed.reply_id:
+            reply_id = parsed.reply_id
+        mentioned = mentioned or parsed.mentions_bot
+
+    merged = replace(
+        last,
+        text="\n".join(lines),
+        images=images,
+        ats=ats,
+        reply_id=reply_id,
+        mentions_bot=mentioned,
+    )
+    return event, merged
 
 
 def _content_cost(content: Any) -> int:
@@ -351,6 +392,13 @@ class MessagePipeline:
         )
         #: 引用消息取回器（懒构造，取不到内容时不影响后续）
         self._quoted_fetcher: QuotedFetcher | None = None
+        #: 免@ 消息的合并缓冲：有人一句一句发碎片时，攒起来一起回。
+        #: **按 (会话, 用户) 独立**，回调在定时器线程里跑（这里已经自己加锁）。
+        self._coalescer = Coalescer(
+            quiet_seconds=self._setting_float("coalesce_quiet_seconds", 3.0),
+            max_seconds=self._setting_float("coalesce_max_seconds", 15.0),
+            on_flush=self._flush_batch,
+        )
 
     # ================================================================== 生命周期
     def start(self) -> None:
@@ -367,6 +415,11 @@ class MessagePipeline:
             if not self._running:
                 return
             self._running = False
+        # 缓冲里的碎片直接丢掉，**不能把半批发出去** —— 停止过程中发消息
+        # 会出现"说到一半"的回复，比不发更糟。
+        dropped = self._coalescer.discard_all()
+        if dropped:
+            self._log(f"停止时丢弃了 {dropped} 条尚未合并的消息", level="debug")
         self.queue.shutdown(wait=True)
         self._log("消息流水线已停止", level="debug")
 
@@ -392,6 +445,11 @@ class MessagePipeline:
         with self._lock:
             self._paused = bool(paused)
         self.settings.bot_paused = self._paused
+        if self._paused:
+            # 暂停时把攒着的碎片丢掉，避免一恢复就把几分钟前的旧话回出去
+            dropped = self._coalescer.discard_all()
+            if dropped:
+                self._log(f"暂停时丢弃了 {dropped} 条尚未合并的消息", level="debug")
         self._log("已暂停回复" if self._paused else "已恢复回复", level="warn")
         self._on_change()
         return self._paused
@@ -424,7 +482,8 @@ class MessagePipeline:
             self._on_change()
             return
 
-        if not self._is_triggered(event, parsed):
+        reason = self._trigger_reason(event, parsed)
+        if reason is None:
             self.stats.dropped += 1
             self._log(f"未 @ 机器人，不触发：{event.describe()}", level="debug")
             self._on_change()
@@ -437,13 +496,73 @@ class MessagePipeline:
             return
 
         session_id = event.session_id
+        speaker = str(event.user_id or "")
+        batch_key = f"{session_id}#{speaker}"
         self.stats.handled += 1
+
+        # ---- v2.2 合并：免@ 的消息先攒一攒，不要一条一条回 ----
+        #
+        # 有人习惯把一句话拆成好几条发（"在" "吗" "问个事"）。每条都回的话
+        # 会变成「咋了 / 嗯？ / 说」三连，一眼就是机器人。
+        if reason == "window" and self._coalesce_on():
+            count = self._coalescer.add(batch_key, (event, parsed))
+            self._log(
+                f"收到：{event.describe()} → {parsed.text[:60]!r}"
+                f"（免@ 第 {count} 条，静默 {self._coalescer.quiet_seconds:g} 秒后一起回）"
+            )
+            self._on_change()
+            return
+
         self._log(f"收到：{event.describe()} → {parsed.text[:60]!r}")
         self._on_change()
 
-        accepted = self.queue.submit(session_id, lambda: self._handle(event, parsed))
+        # @ 了机器人，或者没开合并 → 立刻回。
+        # 但要把这个人已经攒下的碎片**一起吸收**进来，否则会先回一个"嗯？"
+        # 再回正式答案，反而更糟。
+        items = [(event, parsed)]
+        if self._coalesce_on():
+            pending = self._coalescer.take(batch_key)
+            if pending:
+                self._log(
+                    f"把 {speaker} 之前攒的 {len(pending)} 条碎片并进这一轮",
+                    level="debug",
+                )
+                items = pending + items
+        self._dispatch(session_id, items)
+
+    def _dispatch(self, session_id: str, items: list[tuple[MessageEvent, ParsedMessage]]) -> None:
+        """把一批（可能只有一条）合并后交给工作线程。"""
+        event, parsed = _merge_batch(items)
+        accepted = self.queue.submit(
+            session_id, lambda e=event, p=parsed: self._handle(e, p)
+        )
         if not accepted:
-            self._log(f"{session_id} 待处理消息过多，已丢弃一条", level="warn")
+            self._log(f"{session_id} 待处理消息过多，已丢弃 {len(items)} 条", level="warn")
+
+    def _flush_batch(self, batch_key: str, items: list[Any]) -> None:
+        """合并计时到点：把整批发出去。**在定时器线程里跑。**"""
+        if not items:
+            return
+        session_id = str(batch_key).split("#", 1)[0]
+        self._log(
+            f"{session_id} 这 {len(items)} 条免@ 消息已合并，开始回复",
+            level="debug",
+        )
+        try:
+            self._dispatch(session_id, list(items))
+        except Exception as exc:  # noqa: BLE001 定时器线程里不能把异常抛出去
+            log.exception("合并批次派发失败")
+            self._log(f"合并批次派发失败：{exc}", level="error")
+
+    def _coalesce_on(self) -> bool:
+        if not bool(self.settings.get("coalesce_enabled", True)):
+            return False
+        quiet = self._setting_float("coalesce_quiet_seconds", 3.0)
+        cap = self._setting_float("coalesce_max_seconds", 15.0)
+        if (quiet, cap) != (self._coalescer.quiet_seconds, self._coalescer.max_seconds):
+            # 配置改了就地生效，不用重启
+            self._coalescer.configure(quiet_seconds=quiet, max_seconds=cap)
+        return True
 
     # ================================================================== 过滤
     def _passes_filters(self, event: MessageEvent) -> bool:
@@ -470,24 +589,15 @@ class MessagePipeline:
             return False
         return True
 
-    def _is_triggered(self, event: MessageEvent, parsed: ParsedMessage) -> bool:
-        """判断这一条要不要回复。
+    def _trigger_reason(self, event: MessageEvent, parsed: ParsedMessage) -> str | None:
+        """判断这一条要不要回，以及**为什么**要回。
 
-        群聊的规则（v2.1）：
-          ① 私聊一律回
-          ② @ 了机器人 → 回，并**开启/刷新**这个人的保活窗口
-          ③ 没 @ 但**这个人**的窗口还有效 → 回，并**续期**
-          ④ 其它 → 不理
-
-        .. important::
-           窗口是 ``(会话, 用户)`` 独立的。别人说话既不能续期、也不能蹭用 ——
-           否则群里一直有人说话，窗口就永远不关，机器人会变成每句都插嘴。
-
-        Args:
-            会就地修改保活状态（这是它的副作用，刻意为之：判断和续期本就该同时发生）。
+        Returns:
+            ``"private"`` 私聊一律回；``"at"`` 明确 @ 了机器人；
+            ``"window"`` 在免@ 保活窗口里（会续期）；``None`` 不理。
         """
         if not event.is_group:
-            return True
+            return "private"
 
         self_id = event.self_id or self.settings.qq_account or ""
         mentioned = parsed.mentions_bot or (bool(self_id) and self_id in parsed.ats)
@@ -497,10 +607,10 @@ class MessagePipeline:
         if mentioned:
             if self._keepalive_on():
                 self._keepalive.arm(session, speaker)
-            return True
+            return "at"
 
         if not self._keepalive_on() or not self._keepalive.active(session, speaker):
-            return False
+            return None
 
         # 窗口内：续期，并照常回复
         self._keepalive.touch(session, speaker)
@@ -509,7 +619,11 @@ class MessagePipeline:
             f"{speaker} 的 @ 保活还有 {remaining:.0f} 秒，本条按继续对话处理",
             level="debug",
         )
-        return True
+        return "window"
+
+    def _is_triggered(self, event: MessageEvent, parsed: ParsedMessage) -> bool:
+        """兼容旧调用：只要判断"要不要回"。"""
+        return self._trigger_reason(event, parsed) is not None
 
     def _keepalive_on(self) -> bool:
         if not bool(self.settings.get("keepalive_enabled", True)):
@@ -848,6 +962,13 @@ class MessagePipeline:
         """读一个整数配置；类型不对就用默认值（DB 里可能存着字符串）。"""
         try:
             return int(float(self.settings.get(key, fallback)))
+        except (TypeError, ValueError):
+            return fallback
+
+    def _setting_float(self, key: str, fallback: float) -> float:
+        """读一个浮点配置（合并时长按秒算，允许小数）。"""
+        try:
+            return float(self.settings.get(key, fallback))
         except (TypeError, ValueError):
             return fallback
 
