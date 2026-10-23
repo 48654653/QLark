@@ -507,6 +507,10 @@ class MessagePipeline:
         if seconds != int(self._keepalive.seconds):
             # 配置改了就地生效，不用重启
             self._keepalive.set_seconds(seconds)
+        # 过期条目只在被查询时会顺手清掉那些"再也没说话"的用户，
+        # 会一直留在字典里 —— 攒够一批就整体清一次，防止缓慢泄漏。
+        if len(self._keepalive) > 200:
+            self._keepalive.purge()
         return True
 
     # ================================================================== 处理
