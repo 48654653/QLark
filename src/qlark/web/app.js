@@ -3844,7 +3844,7 @@
       /* M3：模型配置（预览数据） */
       model_config: {
         base_url: 'https://api.deepseek.com',
-        api_key_masked: 'sk-3f9a••••••••••••7c21',
+        api_key_masked: 'sk-演示占位••••••••',
         api_key_set: true,
         model: 'deepseek-chat',
         vision_model: 'deepseek-vl2',
