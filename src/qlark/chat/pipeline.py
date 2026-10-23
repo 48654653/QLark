@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import logging
 import random
+import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +26,8 @@ from typing import Any, Callable
 from .. import paths
 from ..core.models import LogSource
 from ..llm.client import ChatResult, LLMError, OpenAIChatClient
+from ..llm.tts import DEFAULT_MODEL as DEFAULT_TTS_MODEL
+from ..llm.tts import TTSError, VoiceDesignClient
 from ..napcat.logbus import LogBus
 from ..onebot.client import OneBotClient, OneBotError
 from ..onebot.events import GROUP, MessageEvent, describe_event, parse_message_event
@@ -205,6 +209,14 @@ class PipelineStats:
     blocked: int = 0
     #: 因为超出速率上限被拦下的条数（M6 风控）
     rate_limited: int = 0
+    #: v2：走语音发出去的回复数
+    voices: int = 0
+    #: v2：配了表情的回复数
+    memes: int = 0
+    #: v2：发成多条（分段）的回复数
+    splits: int = 0
+    #: v2：模型要求语音但合成失败、降级成文字的次数
+    voice_fallbacks: int = 0
     last_error: str | None = None
     last_reply_at: float | None = None
 
@@ -270,6 +282,8 @@ class MessagePipeline:
         self._vision_cache: tuple[tuple[Any, ...], OpenAIChatClient] | None = None
         self._summary_cache: tuple[tuple[str, str, str], OpenAIChatClient] | None = None
         self._ob_cache: tuple[tuple[str, str], OneBotClient] | None = None
+        #: 语音合成客户端（TTS 出错后不缓存，下次重新构造）
+        self._tts_client: VoiceDesignClient | None = None
 
     # ================================================================== 生命周期
     def start(self) -> None:
@@ -300,6 +314,7 @@ class MessagePipeline:
             self._vision_cache = None
             self._summary_cache = None
             self._ob_cache = None
+            self._tts_client = None
 
     # ================================================================== 暂停
     @property
@@ -545,6 +560,17 @@ class MessagePipeline:
         )
         elapsed = time.monotonic() - started
 
+        # ---- 语音：模型在 JSON 里要了 voice，就把这句话合成成音频 ----
+        #
+        # 合成失败**一律降级发文字** —— 语音是可选的，绝不能因为 TTS 出问题
+        # 就把整条回复弄丢。
+        if plan.voice:
+            self._synthesize(plan, persona)
+        if plan.meme:
+            self.stats.memes += 1
+        if len(plan.texts) > 1:
+            self.stats.splits += 1
+
         self.db.bump_stats(
             prompt_tokens=plan.prompt_tokens,
             completion_tokens=plan.completion_tokens,
@@ -552,12 +578,21 @@ class MessagePipeline:
         )
         self.db.touch_session(event.session_id)
 
-        sent = self._sender().send_messages(
-            event,
-            plan.texts,
-            image=plan.image_path,
-            delay_ms=plan.delay_ms if len(plan.texts) > 1 else 0,
-        )
+        try:
+            sent = self._sender().send_messages(
+                event,
+                plan.texts,
+                image=plan.image_path,
+                audio=plan.audio_path,
+                delay_ms=plan.delay_ms if len(plan.texts) > 1 else 0,
+            )
+        finally:
+            # 语音文件只是中转，发完就删
+            if plan.audio_path is not None:
+                try:
+                    plan.audio_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         if sent == 0:
             self._log("模型返回空回复，未发送", level="warn")
             return
@@ -775,6 +810,64 @@ class MessagePipeline:
             level="error",
         )
         return plan
+
+    def _synthesize(self, plan: ReplyPlan, persona: dict[str, Any] | None) -> None:
+        """把 ``plan.texts`` 合成成语音写进 ``plan.audio_path``。
+
+        **任何失败都只是退回文字**（``plan.voice = False``），不抛异常、
+        不影响已经生成好的回复。
+        """
+        spoken = " ".join(plan.texts).strip()
+        if not spoken:
+            plan.voice = False
+            return
+        try:
+            client = self._llm_tts()
+            result = client.speak(
+                spoken,
+                voice_prompt=self.voice_prompt(persona),
+                emotion=plan.emotion or VOICE_EMOTIONS[0],
+            )
+        except TTSError as exc:
+            plan.voice = False
+            self.stats.voice_fallbacks += 1
+            self._log(f"语音合成失败，改发文字（{exc.hint()}：{exc}）", level="warn")
+            return
+        except Exception as exc:  # noqa: BLE001 兜底：语音绝不能拖垮回复
+            plan.voice = False
+            self.stats.voice_fallbacks += 1
+            log.exception("语音合成未预期失败")
+            self._log(f"语音合成异常，改发文字：{exc}", level="error")
+            return
+
+        path = Path(tempfile.gettempdir()) / f"qlark-voice-{uuid.uuid4().hex}.{result.fmt}"
+        try:
+            path.write_bytes(result.audio)
+        except OSError as exc:
+            plan.voice = False
+            self.stats.voice_fallbacks += 1
+            self._log(f"语音文件写入失败，改发文字：{exc}", level="warn")
+            return
+        plan.audio_path = path
+        self.stats.voices += 1
+        self._log(
+            f"语音合成完成（{result.fmt}，{len(result.audio) / 1024:.1f} KB，"
+            f"语气「{plan.emotion or VOICE_EMOTIONS[0]}」）",
+            level="debug",
+        )
+
+    def _llm_tts(self) -> VoiceDesignClient:
+        """语音合成客户端。**共用对话的 base_url / api_key**，只单独配模型名。"""
+        client = self._tts_client
+        if client is None:
+            client = VoiceDesignClient(
+                str(self.settings.get("base_url") or ""),
+                str(self.settings.get("api_key") or ""),
+                str(self.settings.get("tts_model") or DEFAULT_TTS_MODEL),
+                timeout=self._setting_int("tts_timeout_s", 20),
+            )
+            self._tts_client = client
+        return client
 
     def _attach_meme(self, plan: ReplyPlan) -> None:
         """按情绪名挑一张表情图；挑不到就不配（绝不能因此报错）。

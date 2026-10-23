@@ -39,6 +39,9 @@ COLUMN_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # 自定义提示词；留空表示用内置的那套
         ("split_prompt", "TEXT DEFAULT NULL"),
         ("meme_prompt", "TEXT DEFAULT NULL"),
+        # v2：语音回复。voice_prompt 是这个角色的音色描述，留空用全局默认
+        ("voice_enabled", "INTEGER DEFAULT 0"),
+        ("voice_prompt", "TEXT DEFAULT NULL"),
     ],
 }
 

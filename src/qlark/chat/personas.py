@@ -114,6 +114,9 @@ class PersonaStore:
                     # 随机分段 / 表情包：人设级开关（"这个角色会不会这么做"）
                     "split_enabled": bool(row.get("split_enabled")),
                     "meme_enabled": bool(row.get("meme_enabled")),
+                    # 语音回复（v2）：会不会发语音 + 这个角色的音色描述
+                    "voice_enabled": bool(row.get("voice_enabled")),
+                    "voice_prompt": str(row.get("voice_prompt") or ""),
                     # 数值留空 = 跟随全局设置（settings.DEFAULTS）
                     "split_chance": row.get("split_chance"),
                     "split_delay_ms": row.get("split_delay_ms"),
@@ -240,6 +243,11 @@ class PersonaStore:
             updates["split_enabled"] = 1 if fields["split_enabled"] else 0
         if "meme_enabled" in fields:
             updates["meme_enabled"] = 1 if fields["meme_enabled"] else 0
+        # 语音回复（v2）：会不会发语音 + 这个角色的音色描述
+        if "voice_enabled" in fields:
+            updates["voice_enabled"] = 1 if fields["voice_enabled"] else 0
+        if "voice_prompt" in fields:
+            updates["voice_prompt"] = str(fields["voice_prompt"] or "") or None
         # 留空 = 跟随全局：存 NULL，而不是 0（0 会被当成"概率为 0，永不触发"）
         for key, cast, low, high in (
             ("split_chance", float, 0.0, 1.0),

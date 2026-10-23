@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS personas (
   -- 自定义提示词；留空 = 用内置的那套（见 chat/reply_format.py）
   split_prompt         TEXT    DEFAULT NULL,
   meme_prompt          TEXT    DEFAULT NULL,
+  -- 语音回复（v2）：会不会发语音 + 这个角色的音色描述（留空用全局默认）
+  voice_enabled        INTEGER DEFAULT 0,
+  voice_prompt         TEXT    DEFAULT NULL,
   created_at           INTEGER NOT NULL
 );
 

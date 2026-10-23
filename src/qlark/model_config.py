@@ -55,6 +55,10 @@ MODEL_FIELDS = (
     "meme_dir",
     # 回复判断表：教模型按情境判断该回多长、该不该认真
     "reply_rubric_enabled",
+    # 语音回复（v2）：总开关、字数护栏、TTS 模型名（共用 base_url / api_key）
+    "voice_enabled",
+    "voice_max_chars",
+    "tts_model",
 )
 
 #: NapCat 侧可写的字段（改任何一项都要重启 NapCat）
@@ -106,6 +110,10 @@ def snapshot(settings: Settings) -> dict[str, Any]:
         "meme_chance": settings.meme_chance,
         "meme_dir": settings.meme_dir,
         "reply_rubric_enabled": bool(settings.get("reply_rubric_enabled", True)),
+        "voice_enabled": bool(settings.get("voice_enabled", False)),
+        "voice_max_chars": settings.get("voice_max_chars"),
+        "tts_model": str(settings.get("tts_model") or ""),
+        "voice_prompt": str(settings.get("voice_prompt") or ""),
         "onebot_host": settings.onebot_host,
         "onebot_port": settings.onebot_port,
         "event_host": settings.event_host,
@@ -333,6 +341,14 @@ def apply_model(settings: Settings, payload: dict[str, Any]) -> dict[str, Any]:
             updates[key] = _as_float(payload[key])
     if "reply_rubric_enabled" in payload:
         updates["reply_rubric_enabled"] = bool(payload["reply_rubric_enabled"])
+    if "voice_enabled" in payload:
+        updates["voice_enabled"] = bool(payload["voice_enabled"])
+    for key in ("voice_max_chars",):
+        if key in payload:
+            updates[key] = _as_int(payload[key])
+    for key in ("tts_model",):
+        if key in payload:
+            updates[key] = str(payload[key] or "").strip()
     if "meme_dir" in payload:
         updates["meme_dir"] = str(payload["meme_dir"] or "").strip()
     if "blocked_words" in payload:

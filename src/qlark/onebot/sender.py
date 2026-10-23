@@ -13,7 +13,7 @@ from typing import Any, Sequence
 
 from ..onebot.client import OneBotError, OneBotClient
 from ..onebot.events import MessageEvent
-from ..onebot.segments import build_image_segment, build_reply_segment
+from ..onebot.segments import build_image_segment, build_record_segment, build_reply_segment
 
 log = logging.getLogger(__name__)
 
@@ -93,9 +93,10 @@ class ReplySender:
         texts: Sequence[str],
         *,
         image: str | Path | None = None,
+        audio: str | Path | None = None,
         delay_ms: int = 0,
     ) -> int:
-        """按顺序发多条消息，中间留出间隔；最后可选再发一张表情图。
+        """按顺序发多条消息，中间留出间隔；最后可选再发一张表情图或一段语音。
 
         为什么要有间隔：**瞬间连发三条一眼就是机器人**。隔几百毫秒发，
         才像人在打字。这也是"分段回复"能显得自然的关键。
@@ -103,15 +104,23 @@ class ReplySender:
         引用只加在**第一条**上（多条时每条都引用会很吵）；表情图作为**独立一条**
         发出，而不是拼在文字里 —— 那更接近真人发贴纸的样子。
 
+        Args:
+            audio: 给了就**只发这一条语音，文字不再发**。真人发语音时不会
+                再把同样的话打一遍字，所以这里是替代关系而不是追加。
+
         Returns:
             实际发出的消息条数。一条都没发出去时返回 0。
         """
         queue: list[list[dict[str, Any]]] = []
-        for text in texts:
-            for chunk in split_text(text, self.max_chars):
-                queue.append([{"type": "text", "data": {"text": chunk}}])
-        if image is not None:
-            queue.append([build_image_segment(image)])
+        if audio is not None:
+            # 语音替代文字：只发语音那一条
+            queue.append([build_record_segment(audio)])
+        else:
+            for text in texts:
+                for chunk in split_text(text, self.max_chars):
+                    queue.append([{"type": "text", "data": {"text": chunk}}])
+            if image is not None:
+                queue.append([build_image_segment(image)])
 
         if not queue:
             log.warning("没有可发送的内容，跳过（session=%s）", event.session_id)

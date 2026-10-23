@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -231,6 +232,25 @@ def build_reply_segment(message_id: str | int) -> dict[str, Any]:
     return {"type": "reply", "data": {"id": str(message_id)}}
 
 
+def build_record_segment(source: str | Path) -> dict[str, Any]:
+    """构造语音段（QQ 语音消息）。
+
+    **本地文件一律用 base64 内联**，不用 ``file://`` —— 语音文件名常带中文，
+    走路径要过 ``decodeURIComponent``，base64 没这个问题（发图片时踩过）。
+
+    .. important::
+       **不需要自己转 silk。** NapCat 的发送链路会自动判断：不是 silk 就调
+       ``convertToNTSilkTct`` 转一遍再发（日志会打「语音文件X需要转换成silk」）。
+       所以这里直接给 mp3/wav 就行。
+    """
+    path = Path(source).expanduser()
+    raw = path.read_bytes()
+    if not raw:
+        raise ValueError("语音文件为空")
+    encoded = base64.b64encode(raw).decode("ascii")
+    return {"type": "record", "data": {"file": f"base64://{encoded}"}}
+
+
 def build_image_segment(source: str | Path) -> dict[str, Any]:
     """构造图片段。
 
@@ -258,6 +278,7 @@ __all__ = [
     "ParsedMessage",
     "UNKNOWN_PLACEHOLDER",
     "build_image_segment",
+    "build_record_segment",
     "build_reply_segment",
     "build_text_segments",
     "parse_segments",

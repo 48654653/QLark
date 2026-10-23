@@ -118,11 +118,10 @@
     bQuoteGroup: $('bQuoteGroup'), bMessageLabel: $('bMessageLabel'),
     bMemeDir: $('bMemeDir'), btnMemeDirBrowse: $('btnMemeDirBrowse'), memeDirHint: $('memeDirHint'),
     eMemeDir: $('eMemeDir'),
-    bSplitChance: $('bSplitChance'), eSplitChance: $('eSplitChance'),
-    nSplitChanceOverride: $('nSplitChanceOverride'),
-    nMemeChanceOverride: $('nMemeChanceOverride'),
-    bMemeChance: $('bMemeChance'), eMemeChance: $('eMemeChance'),
     bReplyRubric: $('bReplyRubric'),
+    bVoiceEnabled: $('bVoiceEnabled'),
+    bVoiceMaxChars: $('bVoiceMaxChars'), eVoiceMaxChars: $('eVoiceMaxChars'),
+    bTtsModel: $('bTtsModel'), eTtsModel: $('eTtsModel'),
     bSplitMax: $('bSplitMax'), eSplitMax: $('eSplitMax'),
     bSplitDelay: $('bSplitDelay'), eSplitDelay: $('eSplitDelay'),
     bErrorNotice: $('bErrorNotice'), btnBehaviorApply: $('btnBehaviorApply'),
@@ -144,9 +143,9 @@
     pTempOverride: $('pTempOverride'), ePTempOverride: $('ePTempOverride'),
     pTokensOverride: $('pTokensOverride'), ePTokensOverride: $('ePTokensOverride'),
     pSplitEnabled: $('pSplitEnabled'), pMemeEnabled: $('pMemeEnabled'),
+    pVoiceEnabled: $('pVoiceEnabled'),
+    pVoicePrompt: $('pVoicePrompt'), ePVoicePrompt: $('ePVoicePrompt'),
     pSplitDelay: $('pSplitDelay'), ePSplitDelay: $('ePSplitDelay'),
-    pSplitChance: $('pSplitChance'), ePSplitChance: $('ePSplitChance'),
-    pMemeChance: $('pMemeChance'), ePMemeChance: $('ePMemeChance'),
     btnPersonaPromptEdit: $('btnPersonaPromptEdit'),
 
     /* ----- 提示词编辑弹窗 ----- */
@@ -1011,10 +1010,8 @@
     max_reply_chars: ['bMaxReplyChars', 'eMaxReplyChars'],
     reply_quote_group: ['bQuoteGroup', null],
     message_label: ['bMessageLabel', null],
-    split_chance: ['bSplitChance', 'eSplitChance'],
     split_max_messages: ['bSplitMax', 'eSplitMax'],
     split_delay_ms: ['bSplitDelay', 'eSplitDelay'],
-    meme_chance: ['bMemeChance', 'eMemeChance'],
     meme_dir: ['bMemeDir', 'eMemeDir'],
     error_notice_private: ['bErrorNotice', null],
     // M6：风控
@@ -1037,9 +1034,7 @@
     model_override: ['pModelOverride', 'ePModelOverride'],
     temperature_override: ['pTempOverride', 'ePTempOverride'],
     max_tokens_override: ['pTokensOverride', 'ePTokensOverride'],
-    split_chance: ['pSplitChance', 'ePSplitChance'],
     split_delay_ms: ['pSplitDelay', 'ePSplitDelay'],
-    meme_chance: ['pMemeChance', 'ePMemeChance'],
     split_prompt: ['promptSplitText', 'ePromptSplit'],
     meme_prompt: ['promptMemeText', 'ePromptMeme']
   };
@@ -1224,10 +1219,11 @@
     dom.bQuoteGroup.checked = !!cfg.reply_quote_group;
     dom.bMessageLabel.checked = !!cfg.message_label;
     dom.bMemeDir.value = cfg.meme_dir || '';
-    dom.bSplitChance.value = String(Math.round(cfg.split_chance * 100));
-    dom.bMemeChance.value = String(Math.round(cfg.meme_chance * 100));
     paintChanceOverrides(cfg.chance_overrides);
     dom.bReplyRubric.checked = cfg.reply_rubric_enabled !== false;
+    dom.bVoiceEnabled.checked = !!cfg.voice_enabled;
+    dom.bVoiceMaxChars.value = String(cfg.voice_max_chars || 20);
+    dom.bTtsModel.value = cfg.tts_model || '';
     dom.bSplitMax.value = String(cfg.split_max_messages);
     dom.bSplitDelay.value = String(cfg.split_delay_ms);
     paintMemeDirHint(cfg);
@@ -1276,9 +1272,10 @@
     payload.reply_quote_group = !!dom.bQuoteGroup.checked;
     payload.message_label = !!dom.bMessageLabel.checked;
     // 界面用百分比，后端存 0~1
-    payload.split_chance = ratioFromPercent(dom.bSplitChance, 0.25);
-    payload.meme_chance = ratioFromPercent(dom.bMemeChance, 0.2);
     payload.reply_rubric_enabled = !!dom.bReplyRubric.checked;
+    payload.voice_enabled = !!dom.bVoiceEnabled.checked;
+    payload.voice_max_chars = inputNum(dom.bVoiceMaxChars);
+    payload.tts_model = dom.bTtsModel.value.trim();
     payload.split_max_messages = inputNum(dom.bSplitMax);
     payload.split_delay_ms = inputNum(dom.bSplitDelay);
     payload.meme_dir = dom.bMemeDir.value.trim();
@@ -1559,6 +1556,8 @@
         // 以后往 personas 加字段，务必同步这里。
         split_enabled: asBool(p.split_enabled, false),
         meme_enabled: asBool(p.meme_enabled, false),
+        voice_enabled: asBool(p.voice_enabled, false),
+        voice_prompt: asStr(p.voice_prompt),
         split_chance: hasText(p.split_chance) ? numOr(p.split_chance, null) : null,
         split_delay_ms: hasText(p.split_delay_ms) ? numOr(p.split_delay_ms, null) : null,
         meme_chance: hasText(p.meme_chance) ? numOr(p.meme_chance, null) : null,
@@ -1667,10 +1666,10 @@
     dom.pTokensOverride.value = (p.max_tokens_override === null) ? '' : String(p.max_tokens_override);
     dom.pSplitEnabled.checked = !!p.split_enabled;
     dom.pMemeEnabled.checked = !!p.meme_enabled;
+    dom.pVoiceEnabled.checked = !!p.voice_enabled;
+    dom.pVoicePrompt.value = p.voice_prompt || '';
     // 留空 = 跟随全局：空串而不是 0，否则会被当成"概率为 0，永不触发"
     dom.pSplitDelay.value = (p.split_delay_ms === null) ? '' : String(p.split_delay_ms);
-    dom.pSplitChance.value = (p.split_chance === null) ? '' : String(Math.round(p.split_chance * 100));
-    dom.pMemeChance.value = (p.meme_chance === null) ? '' : String(Math.round(p.meme_chance * 100));
     paintGlobalDefaultsHint();
 
     dom.btnPersonaSave.disabled = false;
@@ -1770,8 +1769,6 @@
     var m = S.model;
     var rows = [
       [dom.pSplitDelay, m ? m.split_delay_ms : 500],
-      [dom.pSplitChance, m ? Math.round(m.split_chance * 100) : 25],
-      [dom.pMemeChance, m ? Math.round(m.meme_chance * 100) : 20]
     ];
     rows.forEach(function (pair) {
       if (pair[0]) pair[0].placeholder = '留空 = 跟随全局（' + pair[1] + '）';
@@ -1787,8 +1784,6 @@
    */
   function paintChanceOverrides(overrides) {
     var table = [
-      ['split_chance', dom.nSplitChanceOverride],
-      ['meme_chance', dom.nMemeChanceOverride]
     ];
     table.forEach(function (pair) {
       var box = pair[1];
@@ -1951,11 +1946,11 @@
       temperature_override: inputNum(dom.pTempOverride),
       max_tokens_override: inputNum(dom.pTokensOverride),
       split_enabled: !!dom.pSplitEnabled.checked,
+    voice_enabled: !!dom.pVoiceEnabled.checked,
+    voice_prompt: dom.pVoicePrompt.value.trim(),
       meme_enabled: !!dom.pMemeEnabled.checked,
       // 留空 = 跟随全局设置（后端存 NULL，不是 0）
-      split_chance: ratioFromPercent(dom.pSplitChance, null),
       split_delay_ms: inputNum(dom.pSplitDelay),
-      meme_chance: ratioFromPercent(dom.pMemeChance, null)
     };
     var btn = dom.btnPersonaSave;
     setBusy(btn, true, '保存中…');

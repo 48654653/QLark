@@ -479,22 +479,6 @@
               <span class="field-err" id="eMemeDir" hidden></span>
             </div>
 
-            <label class="field">
-              <span class="field-label">分段概率（%）</span>
-              <input class="input" id="bSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
-              <span class="field-hint">**只有人设勾选了「随机分段回复」的会话才受影响。**掷骰子由程序来做，没掷中时那条规则根本不会发给模型</span>
-              <span class="field-err" id="nSplitChanceOverride" hidden></span>
-              <span class="field-err" id="eSplitChance" hidden></span>
-            </label>
-
-            <label class="field">
-              <span class="field-label">表情概率（%）</span>
-              <input class="input" id="bMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
-              <span class="field-hint">与分段**相互独立**，所以「只发一条但配个表情」也会出现</span>
-              <span class="field-err" id="nMemeChanceOverride" hidden></span>
-              <span class="field-err" id="eMemeChance" hidden></span>
-            </label>
-
             <div class="field">
               <span class="field-label">回复判断表</span>
               <label class="switch">
@@ -505,10 +489,34 @@
               <span class="field-hint">**不是掷骰子，是让模型自己看情境**：打招呼就简短回，问事实就直答，对方在情绪里就认真回、不许敷衍，开玩笑就只接一个梗。同时约束「一次只说一件事、不超过三句」</span>
             </div>
 
+            <div class="field">
+              <span class="field-label">语音回复</span>
+              <label class="switch">
+                <input type="checkbox" id="bVoiceEnabled">
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+                <span class="switch-text">允许机器人发语音</span>
+              </label>
+              <span class="field-hint">**要不要发由模型自己判断**，没有概率。只有很短、而且用声音说出来更自然的那几句才会走语音。还需要在「人设配置」里给角色勾上并写音色描述</span>
+            </div>
+
+            <label class="field">
+              <span class="field-label">语音最长字数</span>
+              <input class="input" id="bVoiceMaxChars" type="number" min="5" max="60" step="1" inputmode="numeric" placeholder="20">
+              <span class="field-hint">超过就改发文字。实测 46 个字要念 21 秒，长语音没人愿意听</span>
+              <span class="field-err" id="eVoiceMaxChars" hidden></span>
+            </label>
+
+            <label class="field">
+              <span class="field-label">语音合成模型</span>
+              <input class="input" id="bTtsModel" type="text" spellcheck="false" autocomplete="off" placeholder="mimo-v2.5-tts-voicedesign">
+              <span class="field-hint">**共用上面的 Base URL 和 Key**，只是模型名不同</span>
+              <span class="field-err" id="eTtsModel" hidden></span>
+            </label>
+
             <label class="field">
               <span class="field-label">一次最多几条</span>
-              <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="2">
-              <span class="field-hint">建议 2 条。再多容易显得在刷屏</span>
+              <input class="input" id="bSplitMax" type="number" min="1" max="5" step="1" inputmode="numeric" placeholder="3">
+              <span class="field-hint">模型自己决定分不分段，这里是**上限** —— 防止它一次发十条刷屏</span>
               <span class="field-err" id="eSplitMax" hidden></span>
             </label>
 
@@ -634,7 +642,7 @@
                     <span class="switch-track"><span class="switch-thumb"></span></span>
                     <span class="switch-text">允许多段连发</span>
                   </label>
-                  <span class="field-hint">勾选后才有机会把一句话拆成多条发送；实际频率由下面的「多段连发概率」决定。**没掷中的轮次，规则根本不会发给模型**</span>
+                  <span class="field-hint">勾上之后，模型才知道自己可以把一句话拆成几条发。**分不分由它自己判断**，最多发「模型配置」里那个条数上限</span>
                 </div>
 
                 <div class="field">
@@ -644,35 +652,37 @@
                     <span class="switch-track"><span class="switch-thumb"></span></span>
                     <span class="switch-text">允许发送表情包</span>
                   </label>
-                  <span class="field-hint">和「多段连发」**各自独立**，所以「只发一条但配个表情」这种自然行为也会出现。表情图取自「模型配置 → 对话行为」里配置的目录</span>
+                  <span class="field-hint">勾上之后模型就能在回复里配表情，**配不配由它自己判断**。表情图取自「模型配置 → 对话行为」里配置的目录</span>
                 </div>
 
-                <div class="row-2">
-                  <label class="field">
-                    <span class="field-label">多段连发间隔（毫秒）</span>
-                    <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
-                    <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
-                    <span class="field-err" id="ePSplitDelay" hidden></span>
+                <div class="field">
+                  <span class="field-label">语音回复</span>
+                  <label class="switch">
+                    <input type="checkbox" id="pVoiceEnabled">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span class="switch-text">允许这个角色发语音</span>
                   </label>
-                  <label class="field">
-                    <span class="field-label">多段连发概率（%）</span>
-                    <input class="input" id="pSplitChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="25">
-                    <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
-                    <span class="field-err" id="ePSplitChance" hidden></span>
-                  </label>
+                  <span class="field-hint">还需要在「模型配置 → 对话行为」里打开总开关。**要不要发由模型自己判断**，只有很短、用声音说出来更自然的那几句才会走语音</span>
                 </div>
 
                 <label class="field">
-                  <span class="field-label">发送图片概率（%）</span>
-                  <input class="input" id="pMemeChance" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="20">
-                  <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**，那个会话只按这里的值掷骰子</span>
-                  <span class="field-err" id="ePMemeChance" hidden></span>
+                  <span class="field-label">音色描述</span>
+                  <textarea class="input" id="pVoicePrompt" rows="4" spellcheck="false" placeholder="留空 = 用全局默认音色"></textarea>
+                  <span class="field-hint">这段决定她听起来是什么声音。写"小女孩、奶气、轻快"会往稚嫩走；写"慢半拍、慵懒"会变成成熟御姐 —— 实测差别很大</span>
+                  <span class="field-err" id="ePVoicePrompt" hidden></span>
+                </label>
+
+                <label class="field">
+                  <span class="field-label">多段连发间隔（毫秒）</span>
+                  <input class="input" id="pSplitDelay" type="number" min="0" max="5000" step="50" inputmode="numeric" placeholder="500">
+                  <span class="field-hint">留空 = 跟随全局。**填了就会覆盖全局**</span>
+                  <span class="field-err" id="ePSplitDelay" hidden></span>
                 </label>
 
                 <div class="field">
-                  <span class="field-label">提示词编辑</span>
-                  <button class="btn" id="btnPersonaPromptEdit" type="button">编辑多段对话 / 发送表情提示词</button>
-                  <span class="field-hint">这两套提示词可以自己改写；也可以点开「总体预览」看看即将发给 AI 的全部内容</span>
+                  <span class="field-label">总体预览</span>
+                  <button class="btn" id="btnPersonaPromptEdit" type="button">看看即将发给 AI 的全部内容</button>
+                  <span class="field-hint">人设提示词、【输出规则】、判断表、示例消息按真实顺序列出来</span>
                 </div>
               </div>
 
