@@ -76,6 +76,12 @@ class ParsedMessage:
     mentions_bot: bool = False
     #: 引用的消息 ID
     reply_id: str | None = None
+    #: 消息里带的合并转发（聊天记录）。
+    #:
+    #: 每项是那个 ``forward`` 段的原始 ``data`` —— 里面可能有内联的 ``content``，
+    #: 也可能只有一个 ``id``（要靠 ``get_forward_msg`` 再取一层）。
+    #: **内容不在这里展开**：展开要调接口，解析函数只管认出来。
+    forwards: list[dict[str, Any]] = field(default_factory=list)
     #: 出现过的未知段类型（便于以后补映射）
     unknown_types: list[str] = field(default_factory=list)
 
@@ -184,7 +190,13 @@ def parse_segments(
             continue
 
         # ---- 合并转发 ----
+        #
+        # 这里**只记下原始 data，不在这里取内容** —— 展开聊天记录要调 OneBot 接口，
+        # 属于网络操作，不能放在纯解析函数里。
+        # 正文占位符保留 `[合并转发]`：落库的记忆里存这个就够了，
+        # 真实内容由流水线展开后拼进"发给模型的这一轮"，不进记忆。
         if seg_type in FORWARD_TYPES:
+            result.forwards.append(dict(data))
             parts.append("[合并转发]")
             continue
 

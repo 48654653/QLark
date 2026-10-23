@@ -172,6 +172,7 @@ def _merge_batch(
     lines: list[str] = []
     images: list[Any] = []
     ats: list[str] = []
+    forwards: list[dict[str, Any]] = []
     reply_id: str | None = None
     mentioned = False
     for _, parsed in items:
@@ -180,6 +181,7 @@ def _merge_batch(
             lines.append(text)
         images.extend(parsed.images)
         ats.extend(parsed.ats)
+        forwards.extend(getattr(parsed, "forwards", ()) or ())
         if parsed.reply_id:
             reply_id = parsed.reply_id
         mentioned = mentioned or parsed.mentions_bot
@@ -189,6 +191,7 @@ def _merge_batch(
         text="\n".join(lines),
         images=images,
         ats=ats,
+        forwards=forwards,
         reply_id=reply_id,
         mentions_bot=mentioned,
     )
@@ -717,33 +720,41 @@ class MessagePipeline:
             prepared = self._prepare_images(parsed)
             media_names = self._save_media(prepared)
 
-        # ---- 引用消息：把被引用的那条取回来看得见 ----
+        # ---- 引用消息 + 合并转发：把内容取回来看得见 ----
         #
-        # OneBot 的 reply 段**只带消息 ID**，内容得回头调 get_msg 取；
-        # 转发聊天记录还要再展开一层。取不到就安静跳过 —— 引用是锦上添花，
-        # 不能因为对方删了原消息就把这条回复卡死。
+        # OneBot 的 reply 段**只带消息 ID**，内容得回头调 get_msg 取。
+        # 单独发过来的聊天记录（forward 段）同理：解析阶段只认出了它是个转发，
+        # 真实内容要在这里展开，否则模型只看到一个 ``[合并转发]`` 占位符。
+        # 两处取不到都安静跳过 —— 取内容只是锦上添花，不能把这条回复卡死。
         quoted = self._quoted_content(parsed)
-        if quoted.images:
+        forwards = self._forward_content(parsed)
+        extra_images = quoted.images + forwards.images
+        if extra_images:
             extra, problems = self._images.prepare_all(
-                quoted.images,
-                limit=len(quoted.images),
+                extra_images,
+                limit=len(extra_images),
                 resolve=self._resolve_image_file,
             )
             if problems:
-                self._log("引用里的部分图片未能处理：" + "；".join(problems), level="warn")
+                self._log("引用 / 聊天记录里的部分图片未能处理：" + "；".join(problems), level="warn")
             prepared.extend(extra)
 
-        # 被引用的内容拼在用户话的前面，模型才看得懂"他指的是哪条"
-        visible_text = _strip_image_placeholders(parsed.text)
+        # 取回的内容拼在用户话的前面，模型才看得懂"他指的是哪条"
+        blocks: list[str] = []
         if quoted.text:
-            block = f"【引用了这条消息】{quoted.text}"
-            visible_text = f"{block}\n{visible_text}" if visible_text else block
+            blocks.append(f"【引用了这条消息】{quoted.text}")
+        if forwards.text:
+            blocks.append(f"【转发的聊天记录】{forwards.text}")
+        visible_text = _strip_image_placeholders(parsed.text)
+        if blocks:
+            head = "\n".join(blocks)
+            visible_text = f"{head}\n{visible_text}" if visible_text else head
 
         if prepared:
             visible = visible_text or "请看这张图片。"
             visible = self._label_message(event, visible)
             user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
-        elif quoted.text:
+        elif blocks:
             user_content = self._label_message(event, visible_text)
         else:
             user_content = memory_text
@@ -1379,6 +1390,51 @@ class MessagePipeline:
         else:
             self._log(f"引用消息取不到内容（id={parsed.reply_id}），按无引用处理", level="debug")
         return content
+
+    def _forward_content(self, parsed: ParsedMessage) -> QuotedContent:
+        """展开**单独发过来的**聊天记录。
+
+        解析阶段只认出"这是个转发"（正文留 ``[合并转发]`` 占位符），
+        真实内容要在这里取 —— 否则模型眼里只有那四个字。
+
+        和引用一样：取不到就安静跳过，不影响回复。
+        """
+        if not parsed.forwards:
+            return QuotedContent()
+        if not bool(self.settings.get("quote_context_enabled", True)):
+            return QuotedContent()
+
+        fetcher = self._quoted_fetcher
+        if fetcher is None:
+            fetcher = QuotedFetcher(self._onebot, max_chars=MAX_QUOTED_CHARS)
+            self._quoted_fetcher = fetcher
+
+        merged = QuotedContent()
+        for data in parsed.forwards:
+            try:
+                content = fetcher.fetch_forward(data)
+            except Exception as exc:  # noqa: BLE001 兜底：聊天记录取不到不能拖垮回复
+                log.exception("展开聊天记录未预期失败")
+                self._log(f"展开聊天记录失败，忽略：{exc}", level="warn")
+                continue
+            if not content.ok:
+                continue
+            if merged.text and content.text:
+                merged.text = f"{merged.text}\n{content.text}"
+            elif content.text:
+                merged.text = content.text
+            merged.images.extend(content.images)
+            merged.ok = True
+
+        if merged.ok:
+            self.stats.quotes += 1
+            self._log(
+                f"聊天记录已展开（{len(merged.text)} 字，{len(merged.images)} 张图）",
+                level="debug",
+            )
+        else:
+            self._log("聊天记录取不到内容，按 [合并转发] 占位处理", level="debug")
+        return merged
 
     def _prepare_images(self, parsed: ParsedMessage) -> list[PreparedImage]:
         """立即下载并预处理图片；任何一张失败都不影响其余。"""

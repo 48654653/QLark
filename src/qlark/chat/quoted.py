@@ -28,8 +28,10 @@ log = logging.getLogger(__name__)
 MAX_FORWARD_NODES = 20
 #: 渲染出来的引用文本最长多少字符（太长会把上下文挤掉）
 MAX_RENDER_CHARS = 600
-#: 一次引用最多带多少张图交给视觉模型
-MAX_QUOTED_IMAGES = 2
+#: 一次引用 / 聊天记录最多带多少张图交给视觉模型
+#:
+#: 一张 512px 约 258 token，三张不到 800 —— 比"看不到图"划算得多。
+MAX_QUOTED_IMAGES = 3
 
 #: 这些段直接给个标记就够了
 _MARKERS = {
@@ -185,6 +187,22 @@ class QuotedFetcher:
                 return render_forward(nodes)
 
         return render_segments(segments, max_chars=self._max_chars)
+
+    def fetch_forward(self, data: dict[str, Any] | None) -> QuotedContent:
+        """展开**单独发过来的**合并转发（聊天记录）。
+
+        和"引用一条消息"不同：这里拿到的就是那个 ``forward`` 段本身，
+        ``data`` 里可能是内联的 ``content``（NapCat 常见），也可能只有一个
+        ``id``，得再调 ``get_forward_msg``。两种都处理，取不到就返回空。
+
+        这段内容**不进记忆** —— 只有 ``[合并转发]`` 这个占位符入库。
+        """
+        if not isinstance(data, dict):
+            return QuotedContent()
+        nodes = self._expand_forward(data.get("id") or data.get("content"))
+        if not nodes:
+            return QuotedContent()
+        return render_forward(nodes)
 
     # ------------------------------------------------------------------ 内部
     @staticmethod
