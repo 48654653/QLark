@@ -261,3 +261,73 @@ def test_pause_discards_pending_fragments(ready, fake_openai: FakeOpenAI) -> Non
 
     time.sleep(0.3)
     assert fake_openai.requests() == [], "丢弃的碎片不该再发出去"
+
+
+# --------------------------------------------------------------------------- #
+# 合并规则（纯函数）
+# --------------------------------------------------------------------------- #
+def _parsed(text: str = "", *, images=None, reply_id=None, mentions=False):
+    from qlark.onebot.segments import ImageRef, ParsedMessage
+
+    return ParsedMessage(
+        text=text,
+        images=[ImageRef(file=f, url=f"https://x/{f}") for f in (images or [])],
+        reply_id=reply_id,
+        mentions_bot=mentions,
+    )
+
+
+def test_merge_takes_images_by_union_and_last_quote() -> None:
+    """图片取**并集**（几张图都要给模型看），引用取**最后一条**非空的。"""
+    from qlark.chat.pipeline import _merge_batch
+    from qlark.onebot.events import parse_message_event
+
+    event = parse_message_event(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "group_id": 1,
+            "user_id": 2,
+            "message_id": 3,
+            "raw_message": "x",
+            "message": [{"type": "text", "data": {"text": "x"}}],
+            "self_id": 10000001,
+            "time": 1,
+        },
+        self_id="10000001",
+    )
+    assert event is not None
+
+    first = (event, _parsed("看这张", images=["a.jpg"], reply_id="111"))
+    second = (event, _parsed("还有这张", images=["b.jpg"]))
+    third = (event, _parsed("再引一条", reply_id="222"))
+
+    _, merged = _merge_batch([first, second, third])
+    assert [ref.file for ref in merged.images] == ["a.jpg", "b.jpg"], "图片要取并集"
+    assert merged.reply_id == "222", "引用取最后一条非空的"
+    assert merged.text == "看这张\n还有这张\n再引一条", "每个碎片一行"
+
+
+def test_merge_single_item_is_untouched() -> None:
+    """只有一条时不要瞎折腾（走的就是原对象）。"""
+    from qlark.chat.pipeline import _merge_batch
+    from qlark.onebot.events import parse_message_event
+
+    event = parse_message_event(
+        {
+            "post_type": "message",
+            "message_type": "group",
+            "group_id": 1,
+            "user_id": 2,
+            "message_id": 3,
+            "raw_message": "x",
+            "message": [{"type": "text", "data": {"text": "x"}}],
+            "self_id": 10000001,
+            "time": 1,
+        },
+        self_id="10000001",
+    )
+    parsed = _parsed("单条")
+    merged_event, merged = _merge_batch([(event, parsed)])
+    assert merged is parsed
+    assert merged_event is event
