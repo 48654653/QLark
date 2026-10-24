@@ -399,20 +399,34 @@
     return isFinite(n) ? n : fallback;
   }
 
+  //: pipeline.snapshot() 里的**计数类**字段。
+  //:
+  //: 这是个白名单：后端新增统计字段时**必须同时加到这里**，否则界面上永远是 0。
+  //: 「回复形态」卡片就踩过这个坑 —— 后端 memes / voices / splits 一直在涨，
+  //: normalizeBot 没列它们，卡片就一直显示 0% / 0% / 0%（共 N 条回复）。
+  //: tests/test_frontend_whitelist.py 会对这份清单做静态契约检查。
+  var BOT_COUNTERS = [
+    'queued', 'handled', 'replied', 'dropped', 'failed',
+    'commands', 'summaries',
+    'images', 'videos', 'vision_fallbacks',
+    'blocked', 'rate_limited',
+    'voices', 'memes', 'splits', 'voice_fallbacks', 'quotes'
+  ];
+
   function normalizeBot(raw) {
     var src = (raw && typeof raw === 'object') ? raw : {};
     var lastReply = Number(src.last_reply_at);
-    return {
+    var out = {
       running: !!src.running,
       paused: !!src.paused,
-      queued: Math.max(0, numOr(src.queued, 0)),
-      handled: Math.max(0, numOr(src.handled, 0)),
-      replied: Math.max(0, numOr(src.replied, 0)),
-      dropped: Math.max(0, numOr(src.dropped, 0)),
       last_error: (src.last_error === undefined || src.last_error === null || src.last_error === '')
         ? null : String(src.last_error),
       last_reply_at: (isFinite(lastReply) && lastReply > 0) ? lastReply : null
     };
+    for (var i = 0; i < BOT_COUNTERS.length; i += 1) {
+      out[BOT_COUNTERS[i]] = Math.max(0, numOr(src[BOT_COUNTERS[i]], 0));
+    }
+    return out;
   }
 
   function normalizeEventServer(raw) {
@@ -3872,6 +3886,10 @@
         handled: 12,
         replied: 10,
         dropped: 2,
+        // 回复形态：预览模式也要有值，否则看不出这张卡片长什么样
+        memes: 3,
+        voices: 1,
+        splits: 2,
         last_error: null,
         last_reply_at: Math.floor(Date.now() / 1000) - 42
       },

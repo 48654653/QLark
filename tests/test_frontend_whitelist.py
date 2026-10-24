@@ -98,3 +98,39 @@ def test_whitelist_defaults_are_sane(model_body: str) -> None:
     assert "keepalive_enabled" in model_body and "undefined" in model_body, (
         "保活应该默认开（undefined 时取 true）"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 运行统计：后端给多少字段，前端就得接多少
+# --------------------------------------------------------------------------- #
+def _bot_counters() -> set[str]:
+    source = APP_JS.read_text(encoding="utf-8")
+    match = re.search(r"var BOT_COUNTERS = \[(.*?)\];", source, re.S)
+    assert match, "app.js 里找不到 BOT_COUNTERS 白名单"
+    return set(re.findall(r"'([^']+)'", match.group(1)))
+
+
+def test_every_pipeline_stat_reaches_the_frontend() -> None:
+    """``PipelineStats.to_dict()`` 里的字段必须被前端接住。
+
+    第三次踩同一类坑：「回复形态」卡片上的配表情 / 语音 / 分段一直是 0%，
+    后端 memes / voices / splits 明明在涨 —— 因为 ``normalizeBot`` 是白名单，
+    没列的字段被悄悄丢掉，界面上就成了 0。这类问题后端日志完全看不出来。
+    """
+    from qlark.chat.pipeline import PipelineStats
+
+    backend = set(PipelineStats().to_dict())
+    body = _function_body("normalizeBot")
+    counters = _bot_counters()
+    missing = sorted(backend - counters - set(re.findall(r"(\w+):", body)))
+    assert not missing, (
+        "这些统计字段后端有、前端 normalizeBot 没接住，界面上会一直显示 0："
+        + "、".join(missing)
+    )
+
+
+def test_reply_shape_counters_are_wired() -> None:
+    """把用户实际遇到的那一次单独钉住。"""
+    counters = _bot_counters()
+    for name in ("memes", "voices", "splits", "replied"):
+        assert name in counters, f"{name} 不在 BOT_COUNTERS 里，回复形态卡片会显示 0"
