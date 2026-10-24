@@ -33,12 +33,21 @@ class LLMErrorKind(str, Enum):
 
 
 #: 值得重试的类型
+#:
+#: ``TLS`` 也在里面：``SSLV3_ALERT_BAD_RECORD_MAC`` / ``UNEXPECTED_EOF`` 这类
+#: 是**连接级**故障（对端的 TLS 会话状态丢了、中间设备改坏了记录、空闲连接被
+#: 服务端回收后又被复用），换一条连接重发基本就好。
+#:
+#: **唯一例外是证书问题**（``CERTIFICATE_VERIFY_FAILED``、系统时间不对、
+#: 证书过期）：那是确定性的，重试多少次都一样 —— 见 ``_is_certificate_error``，
+#: 那种错误会被显式标成不可重试。
 RETRYABLE = frozenset(
     {
         LLMErrorKind.TIMEOUT,
         LLMErrorKind.CONNECTION,
         LLMErrorKind.RATE_LIMIT,
         LLMErrorKind.SERVER,
+        LLMErrorKind.TLS,
     }
 )
 
@@ -49,10 +58,47 @@ ERROR_HINTS: dict[str, str] = {
     LLMErrorKind.RATE_LIMIT: "请求过于频繁，被限流（429）",
     LLMErrorKind.TIMEOUT: "请求超时",
     LLMErrorKind.CONNECTION: "无法连接到服务端",
-    LLMErrorKind.TLS: "TLS 证书校验失败",
+    LLMErrorKind.TLS: "TLS 连接异常（证书或加密中断）",
     LLMErrorKind.SERVER: "服务端错误（5xx）",
     LLMErrorKind.BAD_RESPONSE: "返回内容不符合 OpenAI 格式",
 }
+
+#: 出现这些字样说明是**证书/握手**问题（确定性失败，重试没意义）
+_CERT_MARKERS = (
+    "certificate verify failed",
+    "certificate_verify_failed",
+    "hostname mismatch",
+    "self-signed certificate",
+    "self signed certificate",
+    "unable to get local issuer certificate",
+    "certificate has expired",
+    "certificate is not yet valid",
+    "bad_certificate",
+    "unknown ca",
+)
+
+
+def _is_certificate_error(exc: BaseException) -> bool:
+    """判断一个 SSL 异常是不是**证书**问题（而不是连接被中断）。
+
+    为什么要分开：``requests.exceptions.SSLError`` 是一个很粗的桶，既装
+    "证书验不过"（改了也没用，重试纯属浪费），也装 "bad record mac"
+    （换条连接重发就好）。把它们当成一类处理，要么该重试的不重试、
+    要么把确定性错误重试三遍还多等 4.5 秒。
+    """
+    import ssl
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        text = str(current).lower()
+        if any(marker in text for marker in _CERT_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class LLMError(RuntimeError):
@@ -64,13 +110,18 @@ class LLMError(RuntimeError):
         message: str,
         *,
         status: int | None = None,
+        retryable: bool | None = None,
     ) -> None:
         self.kind = LLMErrorKind(kind) if not isinstance(kind, LLMErrorKind) else kind
         self.status = status
+        #: 覆盖 `RETRYABLE` 的判定；``None`` 表示按类型走默认规则
+        self._retryable = retryable
         super().__init__(message)
 
     @property
     def retryable(self) -> bool:
+        if self._retryable is not None:
+            return self._retryable
         return self.kind in RETRYABLE
 
     def hint(self) -> str:
@@ -270,8 +321,15 @@ class OpenAIChatClient:
         *,
         retries: int = 2,
         backoff: float = 1.5,
+        timeout: float | None = None,
     ) -> ChatResult:
-        """发一次对话补全请求，可重试的类型自动退避重试。"""
+        """发一次对话补全请求，可重试的类型自动退避重试。
+
+        Args:
+            timeout: 本次请求的超时（秒）。``None`` 用客户端的默认值。
+                带视频的请求要显式放宽 —— 服务端得**先把整段视频拉下来解码**，
+                实测一段 1MB 的短视频就要 60s 上下，用默认的 60s 会直接超时。
+        """
         self.validate()
         endpoint = normalize_base_url(self.base_url)
 
@@ -296,7 +354,9 @@ class OpenAIChatClient:
         }
 
         try:
-            result = self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+            result = self._request_loop(
+                endpoint, payload, messages, headers, retries, backoff, timeout
+            )
         except LLMError as exc:
             # 服务端不认 thinking 参数 → 去掉它再来一轮，并**记住**别再发。
             # `thinking` 不是 OpenAI 标准字段：DeepSeek 会静默忽略未知字段，
@@ -306,7 +366,7 @@ class OpenAIChatClient:
                 payload.pop("thinking", None)
                 self.thinking = None
                 result = self._request_loop(
-                    endpoint, payload, messages, headers, retries, backoff
+                    endpoint, payload, messages, headers, retries, backoff, timeout
                 )
             elif "response_format" in payload and looks_like_json_mode_unsupported(
                 exc.status, str(exc)
@@ -315,7 +375,7 @@ class OpenAIChatClient:
                 payload.pop("response_format", None)
                 self.json_mode = False
                 result = self._request_loop(
-                    endpoint, payload, messages, headers, retries, backoff
+                    endpoint, payload, messages, headers, retries, backoff, timeout
                 )
             else:
                 raise
@@ -326,7 +386,9 @@ class OpenAIChatClient:
             log.warning("response_format 生效后返回空内容，关掉它重试一次")
             payload.pop("response_format", None)
             self.json_mode = False
-            result = self._request_loop(endpoint, payload, messages, headers, retries, backoff)
+            result = self._request_loop(
+                endpoint, payload, messages, headers, retries, backoff, timeout
+            )
         return result
 
     def _request_loop(
@@ -337,20 +399,36 @@ class OpenAIChatClient:
         headers: dict[str, str],
         retries: int,
         backoff: float,
+        timeout: float | None = None,
     ) -> ChatResult:
         """带退避重试的请求循环。**会就地修改传入的 payload**（例如去掉参数）。"""
         attempts = max(1, int(retries) + 1)
+        wait_for = float(timeout if timeout is not None and timeout > 0 else self.timeout)
         last_error: LLMError | None = None
         for index in range(attempts):
             try:
                 response = self._session.post(
-                    endpoint, json=payload, headers=headers, timeout=self.timeout
+                    endpoint, json=payload, headers=headers, timeout=wait_for
                 )
             except requests.Timeout as exc:
-                last_error = LLMError(LLMErrorKind.TIMEOUT, f"请求超时（{self.timeout:.0f}s）")
+                last_error = LLMError(LLMErrorKind.TIMEOUT, f"请求超时（{wait_for:.0f}s）")
                 _ = exc
             except requests.exceptions.SSLError as exc:
-                last_error = LLMError(LLMErrorKind.TLS, f"TLS 证书校验失败：{exc}")
+                if _is_certificate_error(exc):
+                    # 证书 / 主机名 / 时间不对：确定性失败，重试没意义
+                    last_error = LLMError(
+                        LLMErrorKind.TLS,
+                        f"TLS 证书校验失败（请检查系统时间、代理或杀软的 HTTPS 扫描）：{exc}",
+                        retryable=False,
+                    )
+                else:
+                    # 连接级故障（bad record mac / 对端关闭 / 会话状态丢失）：
+                    # 换一条连接重发基本就好，所以是可重试的
+                    last_error = LLMError(
+                        LLMErrorKind.TLS,
+                        f"TLS 连接被中断（对端拒绝或链路异常）：{exc}",
+                        retryable=True,
+                    )
             except requests.ConnectionError as exc:
                 last_error = LLMError(
                     LLMErrorKind.CONNECTION, f"无法连接到 {_host_of(endpoint)}：{exc}"
@@ -365,18 +443,36 @@ class OpenAIChatClient:
 
             if last_error is None or not last_error.retryable or index + 1 >= attempts:
                 break
+
+            if last_error.kind is LLMErrorKind.TLS:
+                # 关键：**坏掉的那条 TLS 连接不能留在池子里**给下一次复用，
+                # 否则重试还是打在同一个坏会话上（实测会连续失败三次）。
+                self._drop_connections()
+
             wait = backoff * (2**index)
             log.warning(
-                "模型调用失败（%s），%.1fs 后重试（%d/%d）",
+                "模型调用失败（%s），%.1fs 后重试（%d/%d）：%s",
                 last_error.kind.value,
                 wait,
                 index + 1,
                 attempts - 1,
+                last_error,
             )
             time.sleep(wait)
 
         assert last_error is not None
         raise last_error
+
+    def _drop_connections(self) -> None:
+        """清空连接池（已有连接全部丢弃，下一次请求走全新握手）。
+
+        ``Session.close()`` 只关适配器里的连接池，Session 本身还能继续用 ——
+        所以这里不需要重建客户端。
+        """
+        try:
+            self._session.close()
+        except Exception:  # pragma: no cover - 关连接池失败不该影响重试
+            pass
 
     # ------------------------------------------------------------------ 解析
     def _parse(

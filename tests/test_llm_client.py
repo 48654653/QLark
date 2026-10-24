@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
+import requests
 
 from conftest import FakeOpenAI
 from qlark.llm.client import (
+    RETRYABLE,
     LLMError,
     LLMErrorKind,
     OpenAIChatClient,
@@ -162,3 +166,120 @@ def test_error_hint_is_human_readable(fake_openai: FakeOpenAI) -> None:
     with pytest.raises(LLMError) as info:
         client.complete([{"role": "user", "content": "hi"}], retries=0)
     assert "404" in info.value.hint() or "模型" in info.value.hint()
+
+
+# --------------------------------------------------------------------------- #
+# TLS：连接级故障要重试，证书问题不要
+# --------------------------------------------------------------------------- #
+BAD_RECORD_MAC = (
+    "HTTPSConnectionPool(host='api.xiaomimimo.com', port=443): Max retries exceeded "
+    "with url: /v1/chat/completions (Caused by SSLError(SSLError(1, "
+    "'[SSL: SSLV3_ALERT_BAD_RECORD_MAC] sslv3 alert bad record mac (_ssl.c:2658)')))"
+)
+CERT_FAILED = (
+    "HTTPSConnectionPool(host='api.xiaomimimo.com', port=443): Max retries exceeded "
+    "with url: /v1/chat/completions (Caused by SSLError(SSLCertVerificationError(1, "
+    "'[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+    "unable to get local issuer certificate (_ssl.c:1010)')))"
+)
+
+
+class _StubResponse:
+    """够 ``_parse`` 用就行。"""
+
+    def __init__(self, payload: dict, *, status: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status
+        self.url = "https://stub/chat/completions"
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FlakySession:
+    """按顺序抛出预设的异常，抛完就返回一条正常回复。"""
+
+    def __init__(self, errors: list[Exception]) -> None:
+        self._errors = list(errors)
+        self.calls = 0
+        self.closed = 0
+
+    def post(self, url: str, **kwargs) -> _StubResponse:
+        self.calls += 1
+        if self._errors:
+            raise self._errors.pop(0)
+        return _StubResponse(
+            {
+                "model": "m",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": '{"messages":["好了"]}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+            }
+        )
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def test_tls_interruption_is_retryable() -> None:
+    assert LLMErrorKind.TLS in RETRYABLE
+
+
+def test_bad_record_mac_is_retried_and_recovers() -> None:
+    """``bad record mac`` 是连接级故障：丢掉连接池、换一条连接重发就好。
+
+    这条是拿真实故障换来的：2026-10-24 04:45~04:46 连续三次
+    ``SSLV3_ALERT_BAD_RECORD_MAC``，每条都把用户的回复弄丢了。
+    """
+    session = _FlakySession([requests.exceptions.SSLError(BAD_RECORD_MAC)])
+    client = OpenAIChatClient("https://api.example.com", "k", "m", session=session)
+
+    result = client.complete([{"role": "user", "content": "hi"}], retries=2, backoff=0.01)
+
+    assert result.text == '{"messages":["好了"]}'
+    assert session.calls == 2, "应当重试一次"
+    assert session.closed >= 1, "重试前必须先丢掉坏掉的连接池"
+
+
+def test_bad_record_mac_gives_up_after_retries() -> None:
+    session = _FlakySession([requests.exceptions.SSLError(BAD_RECORD_MAC)] * 3)
+    client = OpenAIChatClient("https://api.example.com", "k", "m", session=session)
+
+    with pytest.raises(LLMError) as info:
+        client.complete([{"role": "user", "content": "hi"}], retries=2, backoff=0.01)
+
+    assert info.value.kind is LLMErrorKind.TLS
+    assert "中断" in str(info.value)
+    assert session.calls == 3
+
+
+def test_certificate_failure_is_not_retried() -> None:
+    """证书问题重试多少次都一样，不该白等 4.5 秒的退避。"""
+    session = _FlakySession([requests.exceptions.SSLError(CERT_FAILED)] * 3)
+    client = OpenAIChatClient("https://api.example.com", "k", "m", session=session)
+
+    with pytest.raises(LLMError) as info:
+        client.complete([{"role": "user", "content": "hi"}], retries=2, backoff=0.01)
+
+    assert info.value.kind is LLMErrorKind.TLS
+    assert info.value.retryable is False
+    assert session.calls == 1, "证书错误不该重试"
+    assert "证书" in str(info.value)
+
+
+def test_certificate_error_detection() -> None:
+    import ssl
+
+    from qlark.llm.client import _is_certificate_error
+
+    assert _is_certificate_error(ssl.SSLCertVerificationError(1, CERT_FAILED))
+    assert not _is_certificate_error(requests.exceptions.SSLError(BAD_RECORD_MAC))
+    # 包一层也要认得出（requests 会把底层异常塞进 args）
+    wrapped = requests.exceptions.SSLError(CERT_FAILED)
+    wrapped.__cause__ = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    assert _is_certificate_error(wrapped)
