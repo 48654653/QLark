@@ -191,20 +191,32 @@ class Summarizer:
         """按需压缩一个记忆键。**绝不抛异常**——它跑在回复之后，不能影响对话。
 
         Args:
-            force: 用户手动点「立即压缩」时为 ``True``。它会绕过"自动总结"开关 ——
-                那个开关管的是**要不要自动压**，不是"能不能压"。
-                （但它仍然受 W 轮门槛约束：没有满一轮可压的东西时硬压只会把
-                还很新鲜、模型正需要逐字看到的对话提前揉成一团。）
+            force: 用户手动点「立即压缩」时为 ``True``。它做两件事：
+
+                1. 绕过"自动总结"开关 —— 那个开关管的是**要不要自动压**，
+                   不是"能不能压"；
+                2. **不再受 W 轮门槛约束**：只要还有完整的问答轮次就压。
+
+                   为什么第 2 点是必要的：以前手动压缩也走 W 门槛，
+                   未压缩 27 轮（门槛 30）时点按钮**什么都不会发生**，
+                   用户只会看到一句"不足 30 轮"，进而以为自动压缩坏了。
+                   手动是用户的显式动作，该压就压；自动路径仍然严格按 W 触发。
         """
         if not self.enabled and not force:
             return SummaryOutcome(status="disabled")
 
         window = self.window
         rounds = self.store.unsummarized_rounds(key)
+        batch = window
         if rounds < window:
-            return SummaryOutcome(status="not_enough", rounds=rounds)
+            if not (force and rounds >= 1):
+                return SummaryOutcome(status="not_enough", rounds=rounds)
+            batch = rounds
+            self._log(
+                f"手动压缩：未压缩 {rounds} 轮（不足 {window} 轮门槛），按现有轮次直接压缩"
+            )
 
-        rows = self.store.oldest_unsummarized(key, window)
+        rows = self.store.oldest_unsummarized(key, batch)
         if not rows:
             return SummaryOutcome(status="not_enough", rounds=rounds)
 

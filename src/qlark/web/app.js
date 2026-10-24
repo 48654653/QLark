@@ -18,6 +18,7 @@
     model: ['模型配置', '对话 / 视觉 / 总结模型槽位'],
     persona: ['人设配置', '人设列表、提示词与权限白名单'],
     memory: ['记忆面板', '记忆轮数、自动总结与会话记忆'],
+    fun: ['趣味功能', '天气等外部数据能力（可选，默认关闭）'],
     logs: ['日志', 'QLark 与 NapCat 输出']
   };
 
@@ -194,6 +195,14 @@
     memMsgCountTag: $('memMsgCountTag'), memMsgHint: $('memMsgHint'), memMsgList: $('memMsgList'),
     btnMemClear: $('btnMemClear'), memClearHint: $('memClearHint'),
 
+    /* ----- v2.3：趣味功能 ----- */
+    funTag: $('funTag'), funEnabled: $('funEnabled'),
+    qwTag: $('qwTag'),
+    qwHost: $('qwHost'), eQwHost: $('eQwHost'),
+    qwKey: $('qwKey'), eQwKey: $('eQwKey'), qwKeyHint: $('qwKeyHint'), qwKeyClear: $('qwKeyClear'),
+    qwCity: $('qwCity'), eQwCity: $('eQwCity'),
+    btnFunApply: $('btnFunApply'), btnFunTest: $('btnFunTest'), funTestResult: $('funTestResult'),
+
     /* ----- M6：首启向导 ----- */
     qaWizard: $('qaWizard'),
     wizardModal: $('wizardModal'), wizardClose: $('wizardClose'),
@@ -264,6 +273,12 @@
     memListBusy: false,    // list_memories 请求飞行中
     memEditingId: null,    // 正在就地编辑的原文 id
     memEditBusy: false,    // update_memory_message 请求飞行中
+
+    /* ----- v2.3：趣味功能 ----- */
+    funCfg: null,          // get_fun_config 归一化结果
+    funLoaded: false,
+    funKeyClear: false,    // 用户点了「清除 API Key」，保存时提交 qweather_key_clear
+    funTestBusy: false,
 
     /* ----- M6：首启向导 ----- */
     wiz: null,             // get_wizard_state 归一化结果
@@ -410,6 +425,7 @@
     'commands', 'summaries',
     'images', 'videos', 'vision_fallbacks',
     'blocked', 'rate_limited',
+    'weathers',
     'voices', 'memes', 'splits', 'voice_fallbacks', 'quotes'
   ];
 
@@ -1038,6 +1054,8 @@
     } else if (page === 'memory') {
       // 记忆页：参数与列表每次进入都重新拉（别的页面也可能改动记忆）
       refreshMemoryPage();
+    } else if (page === 'fun') {
+      loadFunConfig();
     }
   }
 
@@ -2297,6 +2315,12 @@
     var compressed = Math.max(0, numOr(m.compressed, 0));
     if (compressed > total) compressed = total;
 
+    // 轮数 ≠ 条数：一轮 = 一问 + 一答。压缩门槛按**轮**算，
+    // 面板只写"N 条原文"会让人以为早就过了 30 轮（v2.2.1 之前就是这样）。
+    var rounds = Math.max(0, numOr(m.rounds, Math.floor(total / 2)));
+    var pendingRounds = Math.max(0, numOr(m.uncompressed_rounds, 0));
+    if (pendingRounds > rounds) pendingRounds = rounds;
+
     var updated = numOr(m.updated_at, 0);
     if (!isFinite(updated) || updated <= 0) updated = 0;
 
@@ -2309,6 +2333,8 @@
       persona_name: personaName,
       messages: total,
       compressed: compressed,
+      rounds: rounds,
+      uncompressed_rounds: pendingRounds,
       summary_chars: Math.max(0, numOr(m.summary_chars, 0)),
       summary_pending: !!m.summary_pending,
       updated_at: updated
@@ -2370,6 +2396,9 @@
       S.memOverview = cfg.overview;
       renderMemoryConfig();
       renderCapacity();
+      // 阈值（记忆轮数 W）刚拿到 —— 列表里的"未压缩 X / W 轮"要按新值重画一次，
+      // 否则会一直显示兜底的 20
+      if (S.memories && S.memories.length) renderMemoryList();
     }, function (err) {
       S.memCfgLoaded = false;
       setClass(dom.memCfgTag, 'tag err');
@@ -2504,8 +2533,14 @@
 
       var mid = mk('div', 'mem-row-mid');
       mid.appendChild(mk('span', 'mem-persona', m.persona_name));
+      // 轮数才是压缩门槛的计量单位（一轮 = 一问 + 一答）。
+      // 只显示条数会让人把 54 条当成 54 轮，进而以为压缩坏了。
+      var win = (S.memCfg && S.memCfg.memory_rounds) ? S.memCfg.memory_rounds : 20;
+      var shape = m.uncompressed_rounds > 0
+        ? ('未压缩 ' + fmtNum(m.uncompressed_rounds) + ' / ' + fmtNum(win) + ' 轮')
+        : '已全部压入摘要';
       mid.appendChild(mk('span', 'mem-count',
-        fmtNum(m.messages) + ' 条原文 · ' + fmtNum(m.compressed) + ' 条已压缩'));
+        fmtNum(m.messages) + ' 条原文 · ' + fmtNum(m.rounds) + ' 轮 · ' + shape));
       row.appendChild(mid);
 
       var flags = mk('div', 'mem-row-flags');
@@ -2554,7 +2589,9 @@
     }
 
     var compressed = item ? item.compressed : d.messages.filter(function (m) { return m.summarized; }).length;
-    var meta = fmtNum(d.messages.length) + ' 条原文 · ' + fmtNum(compressed) + ' 条已压缩';
+    var rounds = item ? item.rounds : Math.floor(d.messages.length / 2);
+    var meta = fmtNum(d.messages.length) + ' 条原文（' + fmtNum(rounds) + ' 轮）· ' +
+      fmtNum(compressed) + ' 条已压缩';
     var rel = item ? fmtRel(item.updated_at) : null;
     if (rel) meta += ' · 更新于 ' + rel;
     setText(dom.memDetailMeta, meta);
@@ -2589,16 +2626,23 @@
       setText(body, '上次压缩失败，将在下一轮自动重试');
     } else {
       setClass(body, 'mem-summary-body empty');
-      setText(body, '暂无摘要（原文满 W 轮后会自动生成）');
+      // 把"还差几轮"直接写出来：以前只有一句"满 W 轮后会自动生成"，
+      // 用户看不到自己现在几轮，只能猜为什么迟迟不压。
+      var win = (S.memCfg && S.memCfg.memory_rounds) ? S.memCfg.memory_rounds : 20;
+      var item = currentMemoryItem();
+      var pending = item ? item.uncompressed_rounds : 0;
+      setText(body, '暂无摘要：未压缩 ' + fmtNum(pending) + ' / ' + fmtNum(win) +
+        ' 轮，满 ' + fmtNum(win) + ' 轮会自动压缩；也可以点「立即压缩」按现有轮次直接压');
     }
 
-    setText(dom.memSummaryHint, '摘要上限 ' + fmtNum(maxChars) + ' 字 · 手动压缩同样受 W 轮门槛限制');
+    setText(dom.memSummaryHint, '摘要上限 ' + fmtNum(maxChars) +
+      ' 字 · 自动压缩需满 W 轮 · 手动压缩按现有轮次直接压');
     dom.btnMemDeleteSummary.disabled = !hasSummary;
     dom.btnMemDeleteSummary.title = hasSummary
       ? '删除摘要，被压缩的原文会恢复为未压缩状态'
       : '该会话还没有摘要';
     dom.btnMemSummarize.disabled = false;
-    dom.btnMemSummarize.title = '立即压缩最早的 W 轮未压缩原文';
+    dom.btnMemSummarize.title = '立即压缩当前未压缩的轮次（不受 W 轮门槛限制）';
   }
 
   function renderMessageList() {
@@ -2891,6 +2935,145 @@
     }, function (err) {
       setBusy(btn, false);
       toast('应用失败：' + errText(err), 'err');
+    });
+  }
+
+  /* ============================================================
+     v2.3：趣味功能（天气）
+     - 后端契约：get_fun_config / apply_fun_config / test_fun_weather
+     - API Key 只回显打码值；输入框留空 = 不修改；「清除」要等保存才生效
+     ============================================================ */
+
+  // 后端字段名 → [输入框 id, 错误提示 id]
+  var FUN_FIELDS = {
+    qweather_host: ['qwHost', 'eQwHost'],
+    qweather_key: ['qwKey', 'eQwKey'],
+    qweather_city: ['qwCity', 'eQwCity']
+  };
+
+  var FUN_DEFAULT_CITY = '北京';
+
+  function normalizeFunConfig(raw) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    return {
+      enabled: !!s.fun_enabled,
+      host: asStr(s.qweather_host),
+      city: asStr(s.qweather_city) || FUN_DEFAULT_CITY,
+      key_masked: asStr(s.qweather_key_masked),
+      key_set: !!s.qweather_key_set
+    };
+  }
+
+  function loadFunConfig() {
+    return apiCall('get_fun_config').then(function (res) {
+      S.funCfg = normalizeFunConfig(res);
+      S.funLoaded = true;
+      S.funKeyClear = false;
+      renderFunConfig();
+    }, function (err) {
+      setClass(dom.funTag, 'tag err');
+      setText(dom.funTag, '读取失败');
+      toast('趣味功能配置读取失败：' + errText(err), 'err');
+    });
+  }
+
+  function renderFunConfig() {
+    var cfg = S.funCfg || normalizeFunConfig(null);
+    dom.funEnabled.checked = !!cfg.enabled;
+    setClass(dom.funTag, cfg.enabled ? 'tag ok' : 'tag');
+    setText(dom.funTag, cfg.enabled ? '已启用' : '已关闭');
+
+    if (!S.funKeyClear) {
+      dom.qwHost.value = cfg.host;
+      dom.qwCity.value = cfg.city;
+    }
+    dom.qwKey.value = '';
+    dom.qwKey.placeholder = cfg.key_set ? cfg.key_masked : '（未设置）';
+    setText(
+      dom.qwKeyHint,
+      S.funKeyClear
+        ? '点「保存」后才会真正清除'
+        : (cfg.key_set ? '已保存：' + cfg.key_masked + '（留空表示不修改）' : '尚未设置 API Key')
+    );
+
+    var ready = !!cfg.host && cfg.key_set;
+    setClass(dom.qwTag, ready ? 'tag ok' : 'tag');
+    setText(dom.qwTag, ready ? '已配置' : '未配置');
+  }
+
+  function applyFunConfig() {
+    var payload = {
+      fun_enabled: !!dom.funEnabled.checked,
+      qweather_host: dom.qwHost.value.trim(),
+      qweather_city: dom.qwCity.value.trim()
+    };
+    var key = dom.qwKey.value.trim();
+    if (key) payload.qweather_key = key;
+    if (S.funKeyClear) payload.qweather_key_clear = true;
+
+    var btn = dom.btnFunApply;
+    setBusy(btn, true, '保存中…');
+    return apiCall('apply_fun_config', payload).then(function (res) {
+      setBusy(btn, false);
+      if (res && res.ok === false) {
+        var r = renderFieldErrors(FUN_FIELDS, res.errors);
+        var msgs = r.unknown.slice();
+        if (!r.shown && !msgs.length && hasText(res.error)) msgs.push(String(res.error));
+        toast(msgs.length ? msgs[0] : '保存失败，请检查标红字段', 'err');
+        return;
+      }
+      clearFieldErrors(FUN_FIELDS);
+      S.funCfg = normalizeFunConfig(res);
+      S.funKeyClear = false;
+      renderFunConfig();
+      toast(S.funCfg.enabled ? '趣味功能已启用' : '趣味功能已关闭', 'ok');
+    }, function (err) {
+      setBusy(btn, false);
+      toast('保存失败：' + errText(err), 'err');
+    });
+  }
+
+  function clearFunKey() {
+    S.funKeyClear = true;
+    dom.qwKey.value = '';
+    dom.qwKey.placeholder = '保存后清除';
+    setText(dom.qwKeyHint, '点「保存」后才会真正清除');
+  }
+
+  function testFunWeather() {
+    if (S.funTestBusy) return;
+    S.funTestBusy = true;
+    var btn = dom.btnFunTest;
+    setBusy(btn, true, '查询中…');
+
+    var payload = {
+      qweather_host: dom.qwHost.value.trim(),
+      qweather_city: dom.qwCity.value.trim()
+    };
+    var key = dom.qwKey.value.trim();
+    if (key) payload.qweather_key = key;
+
+    return apiCall('test_fun_weather', payload).then(function (res) {
+      S.funTestBusy = false;
+      setBusy(btn, false);
+      var r = (res && typeof res === 'object') ? res : {};
+      show(dom.funTestResult, true);
+      if (r.ok) {
+        setClass(dom.funTestResult, 'test-result ok');
+        setText(dom.funTestResult,
+          (r.latency_ms ? '连接正常（' + r.latency_ms + 'ms）· ' : '') + (r.text || ''));
+        toast('天气接口连通', 'ok');
+      } else {
+        setClass(dom.funTestResult, 'test-result err');
+        setText(dom.funTestResult, r.error || '测试失败');
+        toast(r.error || '测试失败', 'err');
+      }
+    }, function (err) {
+      S.funTestBusy = false;
+      setBusy(btn, false);
+      show(dom.funTestResult, true);
+      setClass(dom.funTestResult, 'test-result err');
+      setText(dom.funTestResult, '测试失败：' + errText(err));
     });
   }
 
@@ -3847,6 +4030,19 @@
       };
     }
 
+    /* v2.3：趣味功能（预览数据用的快照） */
+    function funConfigSnapshot() {
+      var c = state.fun_config;
+      return {
+        ok: true,
+        fun_enabled: !!c.enabled,
+        qweather_host: c.host,
+        qweather_city: c.city,
+        qweather_key_masked: c.key_masked,
+        qweather_key_set: !!c.key_set
+      };
+    }
+
     function memoryListPayload() {
       return state.memories.map(function (m) {
         return {
@@ -3857,6 +4053,8 @@
           persona_uid: m.persona_uid,
           persona_name: m.persona_name,
           messages: m.detail.length,
+          rounds: Math.floor(m.detail.length / 2),
+          uncompressed_rounds: unsummarizedRounds(m),
           compressed: countSummarized(m),
           summary_chars: m.summary ? m.summary.length : 0,
           summary_pending: !!m.summary_pending,
@@ -3990,6 +4188,14 @@
         max_context_chars: 24000,
         summary_runs: 3,
         summary_max_chars: 300
+      },
+      /* v2.3：趣味功能（预览数据） */
+      fun_config: {
+        enabled: false,
+        host: 'demo.re.qweatherapi.com',
+        city: '北京',
+        key_set: false,
+        key_masked: ''
       },
       memories: buildMockMemories(),
 
@@ -4517,6 +4723,60 @@
         return delay(260).then(function () { return { ok: true, deleted_messages: n }; });
       },
 
+      /* ================= v2.3：趣味功能 ================= */
+      get_fun_config: function () {
+        return Promise.resolve(funConfigSnapshot());
+      },
+      apply_fun_config: function (patch) {
+        var p = (patch && typeof patch === 'object') ? patch : {};
+        var c = state.fun_config;
+        var errors = {};
+
+        var enabled = (p.fun_enabled !== undefined) ? !!p.fun_enabled : !!c.enabled;
+        var host = String(p.qweather_host || '').trim().toLowerCase()
+          .replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+        var city = String(p.qweather_city || '').trim() || '北京';
+        var key = String(p.qweather_key || '').trim();
+
+        if (p.qweather_key_clear) { c.key_set = false; c.key_masked = ''; }
+        if (key) {
+          c.key_set = true;
+          c.key_masked = key.slice(0, 4) + '********' + key.slice(-4);
+        }
+        if (host && host.indexOf('.qweatherapi.com') < 0) {
+          errors.qweather_host = 'API Host 应该形如 xxx.re.qweatherapi.com';
+        }
+        if (enabled && !host) errors.qweather_host = '启用趣味功能必须填写和风 API Host';
+        if (enabled && !c.key_set) errors.qweather_key = '启用趣味功能必须填写和风 API Key';
+        if (Object.keys(errors).length) {
+          return delay(200).then(function () { return { ok: false, errors: errors }; });
+        }
+
+        c.enabled = enabled;
+        c.host = host;
+        c.city = city;
+        emit(['info', 'QLark', '趣味功能' + (enabled ? '已启用' : '已关闭') + '（预览数据）']);
+        return delay(220).then(funConfigSnapshot);
+      },
+      test_fun_weather: function (patch) {
+        var p = (patch && typeof patch === 'object') ? patch : {};
+        var c = state.fun_config;
+        var host = String(p.qweather_host || c.host || '').trim();
+        var key = String(p.qweather_key || '').trim() || (c.key_set ? 'saved' : '');
+        if (!host) return delay(180).then(function () { return { ok: false, error: '还没填和风 API Host' }; });
+        if (!key) return delay(180).then(function () { return { ok: false, error: '还没填和风 API Key' }; });
+        var city = String(p.qweather_city || c.city || '北京').trim();
+        return delay(320).then(function () {
+          return {
+            ok: true,
+            city: city,
+            latency_ms: 286,
+            text: city + '现在 14℃ 霾，体感 12℃，东北风2级，湿度 65%。今天 阴转小雨 17/10℃。' +
+              '明天 小雨 12/9℃、降水 6.9mm。（预览数据）'
+          };
+        });
+      },
+
       /* ================= M4：记忆 ================= */
       get_memory_config: function () {
         return Promise.resolve(memoryConfigSnapshot());
@@ -5002,6 +5262,24 @@
       dom.memMaxContext.addEventListener('keydown', function (ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); applyMemoryConfig(); }
       });
+    }
+
+    /* ----- v2.3：趣味功能 ----- */
+    if (dom.btnFunApply) dom.btnFunApply.addEventListener('click', applyFunConfig);
+    if (dom.btnFunTest) dom.btnFunTest.addEventListener('click', testFunWeather);
+    if (dom.qwKeyClear) dom.qwKeyClear.addEventListener('click', clearFunKey);
+    [dom.qwHost, dom.qwCity, dom.qwKey].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener('input', function () {
+        clearFieldErrors(FUN_FIELDS);
+        if (el === dom.qwKey) S.funKeyClear = false;
+      });
+      el.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); applyFunConfig(); }
+      });
+    });
+    if (dom.funEnabled) {
+      dom.funEnabled.addEventListener('change', function () { clearFieldErrors(FUN_FIELDS); });
     }
 
     /* ----- M6：风控设置（对话行为） ----- */

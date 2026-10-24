@@ -160,6 +160,16 @@ class JsApi:
     def summarize_memory_now(self, key: str) -> dict[str, Any]:
         return self._app.summarize_memory_now(key)
 
+    # ------------------------------------------------------------------ 趣味功能
+    def get_fun_config(self) -> dict[str, Any]:
+        return self._app.get_fun_config()
+
+    def apply_fun_config(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._app.apply_fun_config(payload or {})
+
+    def test_fun_weather(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._app.test_fun_weather(payload or {})
+
     # ------------------------------------------------------------------ 日志
     def get_logs(self, since_seq: int = 0) -> dict[str, Any]:
         return self._app.get_logs(since_seq)

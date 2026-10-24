@@ -371,7 +371,10 @@ class MessageStore:
         rows = self._db.query(
             "SELECT memory_key, "
             "       COUNT(*) AS total, "
+            "       SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS users, "
             "       SUM(CASE WHEN summarized = 1 THEN 1 ELSE 0 END) AS compressed, "
+            "       SUM(CASE WHEN summarized = 0 AND role = 'user' THEN 1 ELSE 0 END) AS pend_users, "
+            "       SUM(CASE WHEN summarized = 0 AND role = 'assistant' THEN 1 ELSE 0 END) AS pend_bots, "
             "       MAX(created_at) AS updated_at "
             "FROM messages GROUP BY memory_key ORDER BY updated_at DESC"
         )
@@ -415,6 +418,18 @@ class MessageStore:
                     "persona_name": persona_names.get(uid, f"人设{uid}"),
                     "messages": int(row["total"]) if row else 0,
                     "compressed": int(row["compressed"] or 0) if row else 0,
+                    #: 总轮数 = 完整「一问一答」对数（**不是消息条数**）。
+                    #: 面板必须同时给出轮数与条数 —— 压缩门槛按轮算，
+                    #: 只写"54 条原文"会让人以为早过了 30 轮（真踩过这次）。
+                    "rounds": (
+                        min(int(row["users"] or 0), int(row["total"] or 0) - int(row["users"] or 0))
+                        if row
+                        else 0
+                    ),
+                    #: 还没并进摘要的完整轮数 —— 自动压缩就等它到 W
+                    "uncompressed_rounds": (
+                        min(int(row["pend_users"] or 0), int(row["pend_bots"] or 0)) if row else 0
+                    ),
                     "summary_chars": len(str(summary_row.get("content") or "")) if summary_row else 0,
                     "summary_pending": bool(summary_row and summary_row.get("pending")),
                     "updated_at": int(row["updated_at"] or 0) if row else int(

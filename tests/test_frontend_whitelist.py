@@ -134,3 +134,52 @@ def test_reply_shape_counters_are_wired() -> None:
     counters = _bot_counters()
     for name in ("memes", "voices", "splits", "replied"):
         assert name in counters, f"{name} 不在 BOT_COUNTERS 里，回复形态卡片会显示 0"
+
+
+def test_every_memory_item_field_reaches_the_frontend(tmp_path) -> None:
+    """``list_memories()`` 的字段必须被 ``normalizeMemoryItem`` 接住。
+
+    同一类坑的第三次：``rounds`` / ``uncompressed_rounds`` 是压缩门槛的计量单位，
+    前端丢了会退化成"N 条原文"，用户就会把 54 条当成 54 轮，误判成压缩坏了。
+    """
+    from qlark.chat.store import MessageStore
+    from qlark.storage.db import Database
+
+    db = Database(tmp_path / "memory.db")
+    try:
+        store = MessageStore(db)
+        store.ensure_default_persona()
+        store.append("group:1:p1", "user", "问一句")
+        store.append("group:1:p1", "assistant", "答一句")
+        item = store.list_memories()[0]
+    finally:
+        db.close()
+
+    body = _function_body("normalizeMemoryItem")
+    missing = sorted(name for name in item if name not in body)
+    assert not missing, (
+        "这些记忆字段后端给了、前端 normalizeMemoryItem 没接住："
+        + "、".join(missing)
+    )
+
+
+def test_every_fun_config_field_reaches_the_frontend(tmp_path) -> None:
+    """``get_fun_config()`` 的字段必须被 ``normalizeFunConfig`` 接住。"""
+    from qlark.fun import config as fun_config
+    from qlark.settings import Settings
+    from qlark.storage.db import Database
+
+    db = Database(tmp_path / "fun.db")
+    try:
+        snap = fun_config.snapshot(Settings(db))
+    finally:
+        db.close()
+
+    body = _function_body("normalizeFunConfig")
+    # ok 只是调用结果标记，前端不需要存进配置对象
+    missing = sorted(name for name in snap if name != "ok" and name not in body)
+    assert not missing, (
+        "这些趣味功能字段后端给了、前端 normalizeFunConfig 没接住："
+        + "、".join(missing)
+    )
+

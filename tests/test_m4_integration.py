@@ -221,16 +221,32 @@ def test_deleting_persona_removes_its_memory(ready, fake_openai: FakeOpenAI) -> 
 # --------------------------------------------------------------------------- #
 # 手动压缩
 # --------------------------------------------------------------------------- #
-def test_manual_summarize_reports_not_enough(ready) -> None:
-    """不到 W 轮时手动压缩要如实报告，而不是硬压。
-
-    硬压会把还很新鲜、模型正需要逐字看到的对话提前揉成一团。
-    """
+def test_auto_summarize_reports_not_enough(ready) -> None:
+    """不到 W 轮时**自动**压缩不动手，也不该调模型。"""
     ready.settings.update(memory_rounds=50, auto_summary=True)
     outcome = ready.bot.pipeline.summarizer.maybe_summarize(
         memory_key("private:20000002", 1)
     )
     assert outcome.status == "not_enough"
+
+
+def test_manual_summarize_works_below_window(ready, fake_openai: FakeOpenAI) -> None:
+    """手动「立即压缩」不受 W 轮门槛限制 —— 这是 v2.2.1 修的那条。
+
+    以前未压缩 27 轮、门槛 30 时点按钮毫无反应，用户只能得出
+    "自动压缩坏了"这个结论；手动是显式动作，该压就压。
+    """
+    ready.settings.update(memory_rounds=50, auto_summary=True)
+    key = memory_key("private:20000002", 1)
+    _say(ready, "甲", message_id=711)
+    _say(ready, "乙", message_id=712)
+
+    store = ready.bot.pipeline.store
+    assert store.unsummarized_rounds(key) == 2
+    outcome = ready.bot.pipeline.summarizer.maybe_summarize(key, force=True)
+    assert outcome.status == "ok", outcome
+    assert store.summary_text(key) != "", "手动压缩应当真的压下去"
+    assert store.unsummarized_rounds(key) == 0
 
 
 def test_manual_summarize_ignores_auto_switch(ready, fake_openai: FakeOpenAI) -> None:

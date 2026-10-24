@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import base64
+import json
 import random
 import tempfile
 import threading
@@ -26,6 +27,8 @@ from typing import Any, Callable
 
 from .. import paths
 from ..core.models import LogSource
+from ..fun import config as fun_config
+from ..fun import weather as fun_weather
 from ..llm.client import ChatResult, LLMError, OpenAIChatClient
 from ..llm.tts import DEFAULT_MODEL as DEFAULT_TTS_MODEL
 from ..llm.tts import TTSError, VoiceDesignClient
@@ -265,6 +268,25 @@ def _strip_video_placeholders(text: str) -> str:
     return " ".join(cleaned.split())
 
 
+def _json_object(text: str | None) -> dict[str, Any] | None:
+    """从模型输出里抠出第一个 JSON 对象（容忍 ```json 代码块和前后废话）。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw[:4].lower() == "json":
+            raw = raw[4:]
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        value = json.loads(raw[start : end + 1])
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def format_stamp(timestamp: float | int | None) -> str:
     """按 ``2026-9-25 17:00`` 格式化时间。
 
@@ -358,6 +380,8 @@ class PipelineStats:
     images: int = 0
     #: v2.3：视频成功交给模型的次数（原生 video_url）
     videos: int = 0
+    #: v2.3.1：真正把实时天气注入上下文的次数
+    weathers: int = 0
     #: 因为模型不支持视觉而降级成纯文本的次数（M5）
     vision_fallbacks: int = 0
     #: 命中敏感词被拦下的条数（M6 风控）
@@ -387,6 +411,7 @@ class PipelineStats:
             "summaries": self.summaries,
             "images": self.images,
             "videos": self.videos,
+            "weathers": self.weathers,
             "vision_fallbacks": self.vision_fallbacks,
             "blocked": self.blocked,
             "rate_limited": self.rate_limited,
@@ -429,6 +454,15 @@ class MessagePipeline:
             on_drop=self._on_queue_full,
         )
         self.stats = PipelineStats()
+        #: 趣味功能·天气：按城市缓存渲染结果（10 分钟内不重复打和风）
+        self._weather_cache = fun_weather.WeatherCache()
+        #: 每个会话「上一次聊天气」的时间戳：用来接住"洛宁呢""菏泽"这种省略问句。
+        #: 没有它就只能靠关键词，而省略问句里一个天气词都没有（实测踩过：
+        #: 用户只发"菏泽"，模型会回"我查一下，稍等"，然后什么都不发）。
+        self._weather_seen: dict[str, float] = {}
+        #: 每个会话上一次查的城市（给"那明天呢"这种追问兜底指代）
+        self._weather_last_city: dict[str, str] = {}
+        self._weather_lock = threading.RLock()
 
         self.summarizer = Summarizer(
             settings,
@@ -865,9 +899,18 @@ class MessagePipeline:
         delay_ms = int(self._effective(persona, "split_delay_ms", self.settings.split_delay_ms))
 
         # 末尾指令（离生成点最近，位置决定效果）：
-        #   ① 回复判断表 —— 教它按情境判断该回多长、该不该认真
-        #   ② 格式提醒   —— 格式错要重试、代价更高，所以放最后
+        #   ① 天气   —— 本条消息命中关键词时才有，纯事实
+        #   ② 回复判断表 —— 教它按情境判断该回多长、该不该认真
+        #   ③ 格式提醒   —— 格式错要重试、代价更高，所以放最后
+        weather_block = self._weather_system_block(parsed.text, key)
         trailing_blocks: list[str] = []
+        if weather_block:
+            # 天气是**事实**，放在离用户消息最近的位置 —— 塞进开头那段 system 时，
+            # 中间隔着几十轮历史，模型经常当没看见（实测会回"我没有实时数据"）。
+            trailing_blocks.append(weather_block)
+        elif self._weather_ready():
+            # 功能开着但本轮拿不到数据：禁止"我查一下，稍等"这种空头承诺
+            trailing_blocks.append(self.WEATHER_NO_PROMISE_NOTE)
         if bool(self.settings.get("reply_rubric_enabled", True)):
             trailing_blocks.append(REPLY_RUBRIC)
         extra_system.append(rules)
@@ -1005,6 +1048,184 @@ class MessagePipeline:
     def _meme_library(self) -> MemeLibrary:
         """表情库。设置里没配目录就用 ``<程序目录>/memes``。"""
         return MemeLibrary(resolve_meme_dir(self.settings.meme_dir, paths.app_dir() / "memes"))
+
+    # ------------------------------------------------------------ 趣味功能：天气
+    #
+    # 链路（刻意用"意图 JSON"而不是 function calling：response_format 与 tools
+    # 互斥，而这里的回复协议必须保持 json_object）：
+    #
+    #   关键词粗筛 → 极小的一次调用解析城市 {"city": "成都"}
+    #     → 查和风（10 分钟内同城走缓存）→ 渲染成一句人话
+    #     → 作为【实时天气】放进**末尾 system**（紧挨用户消息，模型才会真的用）
+    #
+    # 任何一步失败都安静跳过，回复照常 —— 天气是锦上添花，不能拖垮对话。
+
+    #: 解析城市用的提示词。只要 JSON，不要解释。
+    WEATHER_INTENT_PROMPT = (
+        "你是天气查询的意图解析器。判断用户这句话是否需要**实时天气数据**才能回答。\n"
+        "需要：只输出 {\"city\": \"城市名\"}；用户没提城市就输出 {\"city\": \"\"}。\n"
+        "不需要：只输出 {\"city\": null}。\n"
+        "只输出这个 JSON，不要任何其他文字。城市名用中文简称（如 成都、北京）。"
+    )
+
+    #: 天气话题的"余温"（秒）：这段时间内同一会话再发一句短消息，就当作在聊天气
+    WEATHER_FOLLOWUP_WINDOW = 600.0
+
+    #: 查不到数据时的约束。
+    #:
+    #: 实测踩过：用户只发"菏泽"，关键词没命中 → 没查 → 模型回了"我查一下，稍等"，
+    #: 然后**再也没有下文**。这种"空头承诺"比说不知道更伤，必须从提示词上禁掉。
+    WEATHER_NO_DATA_NOTE = (
+        "（这轮没有实时数据：直接说你查不到或不知道，"
+        "不要说「我查一下」「稍等」这类承诺。）"
+    )
+
+    #: 功能开着、但本轮没有注入数据时，普遍禁止空头承诺
+    WEATHER_NO_PROMISE_NOTE = (
+        "（你没有联网查询能力：不要把「我查一下」「稍等」当成回复；"
+        "知道就直说，不知道就说不知道。）"
+    )
+
+    def _weather_ready(self) -> bool:
+        """功能开着、且 Host/Key 都配了，才值得往下走。"""
+        if not bool(self.settings.get("fun_enabled", False)):
+            return False
+        return bool(
+            str(self.settings.get("qweather_host") or "").strip()
+            and str(self.settings.get("qweather_key") or "").strip()
+        )
+
+    def _weather_recent(self, key: str) -> bool:
+        """这个会话刚才聊过天气吗？（用来接住"洛宁呢""菏泽"这种省略问句）"""
+        with self._weather_lock:
+            stamp = self._weather_seen.get(key)
+        return bool(stamp) and (time.monotonic() - stamp) <= self.WEATHER_FOLLOWUP_WINDOW
+
+    def _weather_mark(self, key: str, city: str = "") -> None:
+        with self._weather_lock:
+            self._weather_seen[key] = time.monotonic()
+            if city:
+                self._weather_last_city[key] = city
+            if len(self._weather_seen) > 200:  # 防止长期运行无限增长
+                cutoff = time.monotonic() - self.WEATHER_FOLLOWUP_WINDOW
+                self._weather_seen = {
+                    name: stamp for name, stamp in self._weather_seen.items() if stamp >= cutoff
+                }
+
+    def _weather_last_city_for(self, key: str) -> str:
+        with self._weather_lock:
+            return self._weather_last_city.get(key, "")
+
+    @staticmethod
+    def _looks_like_weather_followup(text: str) -> bool:
+        """天气话题里的短追问："洛宁呢" / "那明天呢" / "菏泽"。
+
+        只认**很短**的消息：太长的多半在聊别的（"洛阳那家汤馆真不错"）。
+        """
+        content = str(text or "").strip()
+        if not content or len(content) > 15:
+            return False
+        if any(word in content for word in ("呢", "吗", "？", "?", "怎么", "如何", "多少", "咋")):
+            return True
+        return len(content) <= 6 and not any(ch in content for ch in "，。,.！!；;")
+
+    def _weather_system_block(self, text: str, key: str) -> str:
+        """返回一段 ``【实时天气】``；没数据时返回"别承诺去查"的约束；都不需要返回空串。"""
+        if not self._weather_ready():
+            return ""
+
+        keyword = fun_weather.looks_like_weather_question(text)
+        if not keyword:
+            # 关键词没命中时，只有在"刚聊过天气 + 这是个短追问"的情况下才多花一次调用
+            if not self._weather_recent(key) or not self._looks_like_weather_followup(text):
+                return ""
+
+        city = self._weather_city_from(text, key)
+        if city is None:
+            # 模型明确判断不需要实时数据（例如"热干面真好吃"）
+            return ""
+
+        self._weather_mark(key, city)
+        city = city or str(self.settings.get("qweather_city") or fun_config.DEFAULT_CITY)
+        brief = self._weather_brief(city)
+        if not brief:
+            return self.WEATHER_NO_DATA_NOTE
+        return (
+            f"【实时天气】{brief}\n"
+            "（上面是刚刚查到的真实数据，请直接用；"
+            "不要说自己没有实时数据，也不要说「我查一下」这类话。）"
+        )
+
+    def _weather_city_from(self, text: str, key: str = "") -> str | None:
+        """用一次极小调用把城市名抽出来。
+
+        Returns:
+            城市名（可能是空串，表示"用默认城市"）；``None`` 表示模型判断不需要天气。
+        """
+        client = self._llm(None)
+        # 带上"上文问过哪个城市"：否则"那明天呢"这种追问会被解析成空城市，
+        # 然后拿默认城市去查（用户问的是洛阳，回了个北京，很出戏）。
+        last_city = self._weather_last_city_for(key) if key else ""
+        user_text = str(text or "")[:400]
+        if last_city:
+            user_text = f"（上文刚问过：{last_city}）\n{user_text}"
+        messages = [
+            {"role": "system", "content": self.WEATHER_INTENT_PROMPT},
+            {"role": "user", "content": user_text},
+        ]
+        try:
+            result = client.complete(messages, retries=0, timeout=8)
+        except LLMError as exc:
+            # 解析失败就别硬查了：用默认城市查一次也未必对，宁可跳过
+            self._log(f"天气意图解析失败，本轮跳过：{exc}", level="warn")
+            return None
+
+        self.db.bump_stats(
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            calls=1,
+        )
+        payload = _json_object(result.text)
+        if not isinstance(payload, dict) or "city" not in payload:
+            self._log(f"天气意图不是预期 JSON，本轮跳过：{_preview(result.text, 80)}", level="warn")
+            return None
+        city = payload.get("city")
+        if city is None:
+            return None
+        return str(city).strip()
+
+    def _weather_brief(self, city: str) -> str:
+        """查天气（带缓存）。失败返回空串，绝不影响回复。"""
+        cached = self._weather_cache.get(city)
+        if cached:
+            self._log(f"天气命中缓存：{city}", level="debug")
+            return cached
+
+        started = time.monotonic()
+        client: fun_weather.QWeather | None = None
+        try:
+            client = fun_weather.QWeather(
+                str(self.settings.get("qweather_host") or ""),
+                str(self.settings.get("qweather_key") or ""),
+            )
+            brief = client.brief(city)
+        except fun_weather.WeatherError as exc:
+            self._log(f"天气查询失败（{city}）：{exc}", level="warn")
+            return ""
+        except Exception as exc:  # noqa: BLE001 - 天气不能拖垮回复
+            log.exception("天气查询未预期失败")
+            self._log(f"天气查询异常（{city}）：{exc}", level="error")
+            return ""
+        finally:
+            if client is not None:
+                client.close()
+
+        elapsed = int((time.monotonic() - started) * 1000)
+        self._weather_cache.put(city, brief)
+        self.stats.weathers += 1
+        self._log(f"天气已注入：{brief}（{elapsed}ms）")
+        return brief
+
 
     def _effective(self, persona: dict[str, Any] | None, key: str, fallback: Any) -> Any:
         """读人设级数值；**留空（NULL / 空串）就跟随全局设置**。
@@ -1445,10 +1666,12 @@ class MessagePipeline:
 
         dropped = len(history) - len(kept)
         if dropped:
+            # 提到 WARN：被丢的这批原文**还没进摘要**（压缩按 W 触发，可能还没到门槛），
+            # 丢一次就是这轮对话永久少了一段。用户至少得在日志里看得见。
             self._log(
                 f"上下文超预算（{used}/{budget} 字符），已丢弃最早的 {dropped} 条原文；"
-                "长期记忆摘要保留",
-                level="debug",
+                "这部分内容还没进摘要，本次回复看不到它们（长期记忆摘要仍在）",
+                level="warn",
             )
         return kept
 
@@ -1461,6 +1684,16 @@ class MessagePipeline:
             return
         if outcome.status == "ok":
             self.stats.summaries += 1
+        elif outcome.status == "not_enough":
+            # 把"还差几轮"写进日志：以前这里什么都不说，用户只能靠猜，
+            # 而记忆面板显示的又是"条数"，很容易误判成压缩坏了。
+            window = self.summarizer.window
+            log.debug("记忆压缩未触发：未压缩 %s/%s 轮", outcome.rounds, window)
+            if outcome.rounds + 1 == window:
+                self._log(
+                    f"记忆还差 1 轮就自动压缩（当前未压缩 {outcome.rounds}/{window} 轮）",
+                    level="info",
+                )
         if outcome.did_call_model:
             self.db.bump_stats(
                 prompt_tokens=outcome.prompt_tokens,

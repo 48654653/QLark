@@ -365,6 +365,61 @@ def test_list_memories_parses_key_and_persona(store: MessageStore, db: Database)
     assert item["messages"] == 4
 
 
+def test_list_memories_reports_rounds_not_just_messages(store: MessageStore) -> None:
+    """面板要同时给出「条数」和「轮数」。
+
+    这是 v2.2.1 修的误判：卡片只写"54 条原文"，用户当成 54 轮，
+    于是以为早过了 30 轮门槛、自动压缩坏了 —— 实际只有 27 轮，差 3 轮。
+    """
+    add_rounds(store, 3)
+    item = store.list_memories()[0]
+    assert item["messages"] == 6
+    assert item["rounds"] == 3, "轮数必须是一问一答的对数"
+    assert item["uncompressed_rounds"] == 3
+
+    rows = store.oldest_unsummarized(KEY, 1)
+    store.apply_summary(KEY, "旧总结", [int(r["id"]) for r in rows])
+    item = store.list_memories()[0]
+    assert item["messages"] == 6
+    assert item["rounds"] == 3
+    assert item["uncompressed_rounds"] == 2
+    assert item["compressed"] == 2
+
+
+def test_manual_summarize_ignores_window(store: MessageStore, db: Database) -> None:
+    """手动压缩不受 W 轮门槛限制：只要还有完整轮次就压。
+
+    以前未压缩 27 轮（门槛 30）时点「立即压缩」什么都不发生，
+    用户只能得出"压缩坏了"这个结论（v2.2.1 修的）。
+    """
+    settings = Settings(db)
+    settings.memory_rounds = 30
+    add_rounds(store, 3)
+    fake = FakeSummarizer()
+    summarizer = make_summarizer(store, settings, fake)
+
+    # 自动路径：不够 30 轮，不动
+    assert summarizer.maybe_summarize(KEY).status == "not_enough"
+    assert fake.calls == []
+
+    # 手动路径：把这 3 轮直接压掉
+    outcome = summarizer.maybe_summarize(KEY, force=True)
+    assert outcome.status == "ok"
+    assert outcome.rounds == 3
+    assert store.summary_text(KEY) == fake.reply
+    assert store.unsummarized_rounds(KEY) == 0
+
+
+def test_manual_summarize_with_zero_rounds_is_a_noop(store: MessageStore, db: Database) -> None:
+    settings = Settings(db)
+    settings.memory_rounds = 30
+    fake = FakeSummarizer()
+    outcome = make_summarizer(store, settings, fake).maybe_summarize(KEY, force=True)
+    assert outcome.status == "not_enough"
+    assert outcome.rounds == 0
+    assert fake.calls == [], "一轮都没有时不该调模型"
+
+
 def test_memory_messages_edit_and_delete(store: MessageStore) -> None:
     add_rounds(store, 2)
     rows = store.memory_messages(KEY)

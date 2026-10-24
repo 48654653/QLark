@@ -19,6 +19,8 @@ from .chat.reply_format import FORMAT_REMINDER, build_output_rules, build_previe
 from .chat.store import MessageStore
 from .chat.summarizer import SUMMARY_MAX_CHARS
 from .core.models import AppState, Phase
+from .fun import config as fun_config
+from .fun.weather import QWeather, WeatherError
 from .logging_setup import setup_logging
 from .napcat import netconfig
 from .napcat.envcheck import EnvChecker, detect_credential_accounts
@@ -541,9 +543,10 @@ class Application:
     def summarize_memory_now(self, key: str) -> dict[str, Any]:
         """手动触发一次压缩（面板上的「立即压缩」）。
 
-        注意它会**照常受 W 轮门槛约束**：不到 W 轮就没有可压缩的内容，
-        这里返回 `not_enough` 而不是硬压 —— 硬压会把还很新鲜、模型正需要
-        逐字看到的对话提前揉成一团。
+        **手动不受 W 轮门槛约束**：只要还有完整的问答轮次就压 —— 用户点按钮
+        就是明确的"现在就压"。以前这里也走 W 门槛，未压缩 27 轮、门槛 30 时
+        点下去**毫无反应**，用户只会以为自动压缩坏了（v2.2.1 修的）。
+        自动路径仍然严格按 W 触发，见 ``Summarizer.maybe_summarize``。
         """
         key = str(key or "")
         outcome = self.bot.pipeline.summarizer.maybe_summarize(key, force=True)
@@ -554,9 +557,14 @@ class Application:
                 calls=1,
             )
         self.mark_dirty()
+        window = self.bot.pipeline.summarizer.window
         labels = {
             "ok": f"已压缩 {outcome.rounds} 轮 → {outcome.chars} 字",
-            "not_enough": f"未压缩原文不足 {self.bot.pipeline.summarizer.window} 轮，暂时无需压缩",
+            "not_enough": (
+                f"没有可压缩的完整问答轮次（未压缩 {outcome.rounds} 轮）"
+                if outcome.rounds == 0
+                else f"未压缩 {outcome.rounds} 轮（不满 {window} 轮），手动压缩会按现有轮次直接压"
+            ),
             "disabled": "自动总结已关闭",
             "failed": f"压缩失败，原文已保留：{outcome.error}",
             "empty": "模型返回了空摘要，原文已保留",
@@ -571,6 +579,55 @@ class Application:
             "chars": outcome.chars,
             "message": labels.get(outcome.status, outcome.status),
         }
+
+    # ================================================================== 趣味功能（v2.3）
+    def get_fun_config(self) -> dict[str, Any]:
+        """趣味功能的配置（和风密钥只回显打码值）。"""
+        return fun_config.snapshot(self.settings)
+
+    def apply_fun_config(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """保存趣味功能配置。
+
+        校验失败的字段**不落库**：用户 Host 填错时，原来能用的 Host 不会被覆盖。
+        """
+        result = fun_config.apply(self.settings, payload or {})
+        if result.get("ok"):
+            self.mark_dirty()
+            enabled = "已开启" if result.get("fun_enabled") else "已关闭"
+            self.logbus.add(f"趣味功能{enabled}（默认城市：{result.get('qweather_city')}）")
+        return result
+
+    def test_fun_weather(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """用表单里的值（没填就用已保存的）真打一次和风，**不写库**。
+
+        面板上的「测试连接」走这里。任何失败都返回 ``ok=False`` + 人话，
+        绝不抛异常 —— 一个测试按钮不该让整个界面报错。
+        """
+        params = fun_config.resolve(self.settings, payload or {})
+        if not params["host"]:
+            return {"ok": False, "error": "还没填和风 API Host（控制台「设置」里那一行）"}
+        if not params["key"]:
+            return {"ok": False, "error": "还没填和风 API Key"}
+
+        started = time.monotonic()
+        client: QWeather | None = None
+        try:
+            client = QWeather(params["host"], params["key"])
+            text = client.brief(params["city"])
+        except WeatherError as exc:
+            message = str(exc)
+            self.logbus.add(f"天气测试失败：{message}", level="warn")
+            return {"ok": False, "error": message}
+        except Exception as exc:  # noqa: BLE001 - 测试按钮绝不冒泡
+            self.logbus.add(f"天气测试异常：{exc}", level="error")
+            return {"ok": False, "error": f"天气查询异常：{exc}"}
+        finally:
+            if client is not None:
+                client.close()
+
+        latency_ms = int((time.monotonic() - started) * 1000)
+        self.logbus.add(f"天气测试成功：{text}（{latency_ms}ms）")
+        return {"ok": True, "text": text, "city": params["city"], "latency_ms": latency_ms}
 
     def mark_dirty(self) -> None:
         self._dirty.set()

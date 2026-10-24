@@ -64,6 +64,20 @@ DEFAULTS: dict[str, Any] = {
     #: 带视频的请求超时（秒）。服务端要先下载解码整段视频，默认 60s 不够。
     "video_timeout_s": 180,
 
+    # ---- 趣味功能（v2.3）----
+    #
+    # 总开关默认**关**：开着就意味着"把群友提到的城市名发给第三方"，
+    # 这是用户该自己决定的事，不能默认替人做主。
+    #: 趣味功能总开关（天气等外部数据能力）
+    "fun_enabled": False,
+    #: 和风天气的专属 API Host（形如 xxx.re.qweatherapi.com）。
+    #: 公共域名（api/devapi.qweather.com）已返回 Invalid Host ——
+    #: API Host 本身就是认证的一部分。
+    "qweather_host": "",
+    "qweather_key": "",
+    #: 默认城市：开了功能但没填城市时用
+    "qweather_city": "北京",
+
     # ---- 随机分段回复 / 表情包回复 ----
     #
     # 「会不会做」是人设级的（见 personas.split_enabled / meme_enabled），
