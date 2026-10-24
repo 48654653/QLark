@@ -938,26 +938,38 @@
       <!-- ---------- 趣味功能 ---------- -->
       <section class="page" id="page-fun" data-page="fun">
 
-        <!-- 开关 -->
+        <!-- 天气功能（每个功能一个小开关，没有总开关） -->
         <section class="card panel">
           <div class="panel-head">
-            <h2 class="panel-title">趣味功能</h2>
-            <span class="tag" id="funTag">读取中…</span>
+            <h2 class="panel-title">天气</h2>
+            <span class="tag" id="weatherTag">读取中…</span>
             <span class="spacer"></span>
-            <span class="head-hint">让机器人能查实时数据，目前只有天气</span>
+            <span class="head-hint">打开后，聊天里问天气才会真的去查</span>
           </div>
 
           <div class="form-grid">
             <div class="field span2">
-              <span class="field-label">总开关</span>
+              <span class="field-label">功能开关</span>
               <label class="switch">
-                <input type="checkbox" id="funEnabled">
+                <input type="checkbox" id="weatherEnabled">
                 <span class="switch-track"><span class="switch-thumb"></span></span>
-                <span class="switch-text">启用趣味功能</span>
+                <span class="switch-text">启用天气查询</span>
               </label>
               <span class="field-hint">
-                打开意味着**会把聊天里提到的城市名发给和风天气**。开启后问天气会自动查（命中关键词、或接着刚才的天气话题只发一个地名时），同城 10 分钟缓存。默认关闭，想清楚再开。
+                关掉就完全不查、也不发任何外部请求。打开意味着**会把聊天里提到的城市名发给和风天气**（不发聊天内容）。
               </span>
+            </div>
+
+            <div class="field span2">
+              <span class="field-label">触发词 <span class="kw-count" id="qwKeywordCount">0</span></span>
+              <ul class="kw-list" id="qwKeywordList"></ul>
+              <div class="kw-add">
+                <input class="input" id="qwKeywordInput" type="text" maxlength="12" placeholder="加一个词，比如 紫外线、闷热" spellcheck="false" autocomplete="off">
+                <button class="btn ghost sm" id="btnQwKeywordAdd" type="button">添加</button>
+                <button class="btn ghost sm" id="btnQwKeywordReset" type="button">恢复默认</button>
+              </div>
+              <span class="field-hint">消息里命中任意一个词就会去查；同一个话题里只发一个地名（"洛宁呢"）也会查。</span>
+              <span class="field-err" id="eQwKeywords" hidden></span>
             </div>
           </div>
         </section>

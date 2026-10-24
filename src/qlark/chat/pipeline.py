@@ -1087,8 +1087,8 @@ class MessagePipeline:
     )
 
     def _weather_ready(self) -> bool:
-        """功能开着、且 Host/Key 都配了，才值得往下走。"""
-        if not bool(self.settings.get("fun_enabled", False)):
+        """天气开关开着、且 Host/Key 都配了，才值得往下走。"""
+        if not fun_config.weather_on(self.settings):
             return False
         return bool(
             str(self.settings.get("qweather_host") or "").strip()
@@ -1134,7 +1134,9 @@ class MessagePipeline:
         if not self._weather_ready():
             return ""
 
-        keyword = fun_weather.looks_like_weather_question(text)
+        keyword = fun_weather.looks_like_weather_question(
+            text, fun_config.keywords(self.settings)
+        )
         if not keyword:
             # 关键词没命中时，只有在"刚聊过天气 + 这是个短追问"的情况下才多花一次调用
             if not self._weather_recent(key) or not self._looks_like_weather_followup(text):

@@ -29,31 +29,32 @@ DEFAULT_TIMEOUT = 4.0
 #: 城市名最多个数换来的候选（和风 GeoAPI 的 number 参数）
 LOOKUP_LIMIT = 3
 
-#: 强关键词：命中就值得花一次极小调用去解析城市
-_STRONG_HINTS = (
+#: 默认触发词：命中任意一个，才值得花一次极小调用去解析城市。
+#:
+#: 这层只是**省钱的前置过滤**（"要不要查"由模型判断），所以默认只放明确的
+#: 天气词；"热/冷/雨"这些单字故意不放 —— "热干面"会白触发一次。
+#:
+#: v2.3.2 起这张表可以在「趣味功能 → 天气」页里增删（存 ``settings.weather_keywords``），
+#: 这里只是**默认值**与"恢复默认"用的那份。
+DEFAULT_KEYWORDS: tuple[str, ...] = (
     "天气", "气温", "温度", "多少度", "几度", "天气预报",
     "下雨", "下雪", "雨伞", "带伞", "降温", "升温", "刮风", "霾", "紫外线",
     "好热", "好冷", "太热", "太冷", "真热", "真冷", "热死", "冷死",
+    "穿什么", "要不要穿", "外套",
 )
-#: 弱关键词：只有同时出现疑问/建议类词时才查（避免"热干面"这种误触发）
-_WEAK_HINTS = ("热", "冷", "雨", "雪", "风", "晴", "阴", "穿")
-_ASK_HINTS = ("吗", "呢", "么", "怎么", "咋", "多少", "要不要", "需要", "穿什么", "用不用", "该穿")
 
 
-def looks_like_weather_question(text: str) -> bool:
+def looks_like_weather_question(text: str, keywords: list[str] | None = None) -> bool:
     """粗筛：这句话值不值得为它多花一次模型调用。
 
-    这层只是**省钱的前置过滤**，判断"要不要查"由模型做（见 pipeline 的
-    意图调用）。所以宁可放进来多一次小调用，也别漏掉"明天要带伞吗"这种。
+    Args:
+        keywords: 用户自定义的触发词；空 / ``None`` 时用 :data:`DEFAULT_KEYWORDS`。
     """
     content = str(text or "")
     if not content.strip():
         return False
-    if any(hint in content for hint in _STRONG_HINTS):
-        return True
-    return any(hint in content for hint in _WEAK_HINTS) and any(
-        hint in content for hint in _ASK_HINTS
-    )
+    words = [str(word).strip() for word in (keywords or DEFAULT_KEYWORDS)]
+    return any(word and word in content for word in words)
 
 
 class WeatherCache:
@@ -324,6 +325,7 @@ class QWeather:
 __all__ = [
     "CODE_HINTS",
     "City",
+    "DEFAULT_KEYWORDS",
     "DEFAULT_TIMEOUT",
     "LOOKUP_LIMIT",
     "QWeather",

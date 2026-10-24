@@ -66,9 +66,12 @@ DEFAULTS: dict[str, Any] = {
 
     # ---- 趣味功能（v2.3）----
     #
-    # 总开关默认**关**：开着就意味着"把群友提到的城市名发给第三方"，
-    # 这是用户该自己决定的事，不能默认替人做主。
-    #: 趣味功能总开关（天气等外部数据能力）
+    # 每个功能各自一个开关（v2.3.2 起），没有"总开关"了：想用哪个开哪个。
+    #: 天气查询开关。``None`` = 未设置（沿用旧版的 ``fun_enabled``，做兼容）
+    "weather_enabled": None,
+    #: 天气触发词（用户可编辑）；空列表 = 用内置默认那 26 个
+    "weather_keywords": [],
+    #: 旧版总开关，保留只为兼容：新代码读 ``weather_enabled``
     "fun_enabled": False,
     #: 和风天气的专属 API Host（形如 xxx.re.qweatherapi.com）。
     #: 公共域名（api/devapi.qweather.com）已返回 Invalid Host ——

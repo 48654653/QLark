@@ -196,7 +196,11 @@
     btnMemClear: $('btnMemClear'), memClearHint: $('memClearHint'),
 
     /* ----- v2.3：趣味功能 ----- */
-    funTag: $('funTag'), funEnabled: $('funEnabled'),
+    weatherTag: $('weatherTag'), weatherEnabled: $('weatherEnabled'),
+    qwKeywordList: $('qwKeywordList'), qwKeywordCount: $('qwKeywordCount'),
+    qwKeywordInput: $('qwKeywordInput'),
+    btnQwKeywordAdd: $('btnQwKeywordAdd'), btnQwKeywordReset: $('btnQwKeywordReset'),
+    eQwKeywords: $('eQwKeywords'),
     qwTag: $('qwTag'),
     qwHost: $('qwHost'), eQwHost: $('eQwHost'),
     qwKey: $('qwKey'), eQwKey: $('eQwKey'), qwKeyHint: $('qwKeyHint'), qwKeyClear: $('qwKeyClear'),
@@ -279,6 +283,7 @@
     funLoaded: false,
     funKeyClear: false,    // 用户点了「清除 API Key」，保存时提交 qweather_key_clear
     funTestBusy: false,
+    funKeywords: [],       // 可编辑的触发词表（保存时整体提交）
 
     /* ----- M6：首启向导 ----- */
     wiz: null,             // get_wizard_state 归一化结果
@@ -2946,6 +2951,7 @@
 
   // 后端字段名 → [输入框 id, 错误提示 id]
   var FUN_FIELDS = {
+    weather_keywords: ['qwKeywordList', 'eQwKeywords'],
     qweather_host: ['qwHost', 'eQwHost'],
     qweather_key: ['qwKey', 'eQwKey'],
     qweather_city: ['qwCity', 'eQwCity']
@@ -2953,10 +2959,22 @@
 
   var FUN_DEFAULT_CITY = '北京';
 
+  function normalizeFunKeywords(raw) {
+    if (!Array.isArray(raw)) return [];
+    var out = [];
+    raw.forEach(function (word) {
+      var text = String(word === undefined || word === null ? '' : word).trim();
+      if (text && out.indexOf(text) < 0) out.push(text);
+    });
+    return out;
+  }
+
   function normalizeFunConfig(raw) {
     var s = (raw && typeof raw === 'object') ? raw : {};
     return {
-      enabled: !!s.fun_enabled,
+      enabled: !!s.weather_enabled,
+      keywords: normalizeFunKeywords(s.weather_keywords),
+      default_keywords: normalizeFunKeywords(s.weather_default_keywords),
       host: asStr(s.qweather_host),
       city: asStr(s.qweather_city) || FUN_DEFAULT_CITY,
       key_masked: asStr(s.qweather_key_masked),
@@ -2969,19 +2987,20 @@
       S.funCfg = normalizeFunConfig(res);
       S.funLoaded = true;
       S.funKeyClear = false;
+      S.funKeywords = S.funCfg.keywords.slice();
       renderFunConfig();
     }, function (err) {
-      setClass(dom.funTag, 'tag err');
-      setText(dom.funTag, '读取失败');
+      setClass(dom.weatherTag, 'tag err');
+      setText(dom.weatherTag, '读取失败');
       toast('趣味功能配置读取失败：' + errText(err), 'err');
     });
   }
 
   function renderFunConfig() {
     var cfg = S.funCfg || normalizeFunConfig(null);
-    dom.funEnabled.checked = !!cfg.enabled;
-    setClass(dom.funTag, cfg.enabled ? 'tag ok' : 'tag');
-    setText(dom.funTag, cfg.enabled ? '已启用' : '已关闭');
+    dom.weatherEnabled.checked = !!cfg.enabled;
+    setClass(dom.weatherTag, cfg.enabled ? 'tag ok' : 'tag');
+    setText(dom.weatherTag, cfg.enabled ? '已启用' : '未启用');
 
     if (!S.funKeyClear) {
       dom.qwHost.value = cfg.host;
@@ -2999,11 +3018,72 @@
     var ready = !!cfg.host && cfg.key_set;
     setClass(dom.qwTag, ready ? 'tag ok' : 'tag');
     setText(dom.qwTag, ready ? '已配置' : '未配置');
+    renderFunKeywords();
+  }
+
+  /** 触发词表格：每行一个词 + 删除按钮（保存时整份提交） */
+  function renderFunKeywords() {
+    var list = dom.qwKeywordList;
+    if (!list) return;
+    list.textContent = '';
+    var words = S.funKeywords || [];
+    setText(dom.qwKeywordCount, String(words.length));
+    if (!words.length) {
+      list.appendChild(mk('li', 'kw-empty', '还没有触发词 —— 至少留一个，否则永远不会去查'));
+      return;
+    }
+    words.forEach(function (word, index) {
+      var item = mk('li', 'kw-item');
+      item.appendChild(mk('span', 'kw-text', word));
+      var remove = mk('button', 'kw-del', '×');
+      remove.type = 'button';
+      remove.title = '删除「' + word + '」';
+      remove.addEventListener('click', function () {
+        S.funKeywords.splice(index, 1);
+        clearFieldErrors(FUN_FIELDS);
+        renderFunKeywords();
+      });
+      item.appendChild(remove);
+      list.appendChild(item);
+    });
+  }
+
+  function addFunKeyword() {
+    var raw = String(dom.qwKeywordInput.value || '').trim();
+    if (!raw) return;
+    var parts = raw.split(/[\s,，、;；]+/).filter(Boolean);
+    var added = 0;
+    parts.forEach(function (word) {
+      var text = String(word).slice(0, 12);
+      if (!text) return;
+      if ((S.funKeywords || []).indexOf(text) >= 0) return;
+      if ((S.funKeywords || []).length >= 30) return;
+      S.funKeywords.push(text);
+      added += 1;
+    });
+    dom.qwKeywordInput.value = '';
+    clearFieldErrors(FUN_FIELDS);
+    renderFunKeywords();
+    if (!added) toast('这些词已经在表里了', 'warn');
+  }
+
+  function resetFunKeywords() {
+    var cfg = S.funCfg || normalizeFunConfig(null);
+    var defaults = (cfg.default_keywords || []).slice();
+    if (!defaults.length) {
+      toast('没拿到默认词表，请先刷新配置', 'err');
+      return;
+    }
+    S.funKeywords = defaults;
+    clearFieldErrors(FUN_FIELDS);
+    renderFunKeywords();
+    toast('已恢复默认触发词（记得点保存）', 'ok');
   }
 
   function applyFunConfig() {
     var payload = {
-      fun_enabled: !!dom.funEnabled.checked,
+      weather_enabled: !!dom.weatherEnabled.checked,
+      weather_keywords: (S.funKeywords || []).slice(),
       qweather_host: dom.qwHost.value.trim(),
       qweather_city: dom.qwCity.value.trim()
     };
@@ -3025,8 +3105,9 @@
       clearFieldErrors(FUN_FIELDS);
       S.funCfg = normalizeFunConfig(res);
       S.funKeyClear = false;
+      S.funKeywords = S.funCfg.keywords.slice();
       renderFunConfig();
-      toast(S.funCfg.enabled ? '趣味功能已启用' : '趣味功能已关闭', 'ok');
+      toast(S.funCfg.enabled ? '天气功能已启用' : '天气功能已关闭', 'ok');
     }, function (err) {
       setBusy(btn, false);
       toast('保存失败：' + errText(err), 'err');
@@ -4031,11 +4112,15 @@
     }
 
     /* v2.3：趣味功能（预览数据用的快照） */
+    var FUN_MOCK_DEFAULTS = ['天气', '气温', '温度', '下雨', '带伞', '好热', '好冷', '外套'];
+
     function funConfigSnapshot() {
       var c = state.fun_config;
       return {
         ok: true,
-        fun_enabled: !!c.enabled,
+        weather_enabled: !!c.enabled,
+        weather_keywords: (c.keywords || []).slice(),
+        weather_default_keywords: FUN_MOCK_DEFAULTS.slice(),
         qweather_host: c.host,
         qweather_city: c.city,
         qweather_key_masked: c.key_masked,
@@ -4192,6 +4277,7 @@
       /* v2.3：趣味功能（预览数据） */
       fun_config: {
         enabled: false,
+        keywords: ['天气', '气温', '温度', '下雨', '带伞', '好热', '好冷', '外套'],
         host: 'demo.re.qweatherapi.com',
         city: '北京',
         key_set: false,
@@ -4732,11 +4818,25 @@
         var c = state.fun_config;
         var errors = {};
 
-        var enabled = (p.fun_enabled !== undefined) ? !!p.fun_enabled : !!c.enabled;
+        var enabled = (p.weather_enabled !== undefined) ? !!p.weather_enabled : !!c.enabled;
         var host = String(p.qweather_host || '').trim().toLowerCase()
           .replace(/^https?:\/\//, '').replace(/\/.*$/, '');
         var city = String(p.qweather_city || '').trim() || '北京';
         var key = String(p.qweather_key || '').trim();
+        var words = Array.isArray(p.weather_keywords) ? p.weather_keywords.slice() : null;
+
+        if (words !== null) {
+          var cleaned = [];
+          words.forEach(function (word) {
+            var text = String(word === undefined || word === null ? '' : word).trim();
+            if (text && cleaned.indexOf(text) < 0) cleaned.push(text.slice(0, 12));
+          });
+          if (enabled && !cleaned.length) {
+            errors.weather_keywords = '开天气功能至少要留一个触发词（或点「恢复默认」）';
+          } else {
+            c.keywords = cleaned;
+          }
+        }
 
         if (p.qweather_key_clear) { c.key_set = false; c.key_masked = ''; }
         if (key) {
@@ -4746,8 +4846,8 @@
         if (host && host.indexOf('.qweatherapi.com') < 0) {
           errors.qweather_host = 'API Host 应该形如 xxx.re.qweatherapi.com';
         }
-        if (enabled && !host) errors.qweather_host = '启用趣味功能必须填写和风 API Host';
-        if (enabled && !c.key_set) errors.qweather_key = '启用趣味功能必须填写和风 API Key';
+        if (enabled && !host) errors.qweather_host = '开天气功能必须填写和风 API Host';
+        if (enabled && !c.key_set) errors.qweather_key = '开天气功能必须填写和风 API Key';
         if (Object.keys(errors).length) {
           return delay(200).then(function () { return { ok: false, errors: errors }; });
         }
@@ -4755,7 +4855,7 @@
         c.enabled = enabled;
         c.host = host;
         c.city = city;
-        emit(['info', 'QLark', '趣味功能' + (enabled ? '已启用' : '已关闭') + '（预览数据）']);
+        emit(['info', 'QLark', '天气功能' + (enabled ? '已启用' : '已关闭') + '（预览数据）']);
         return delay(220).then(funConfigSnapshot);
       },
       test_fun_weather: function (patch) {
@@ -5268,6 +5368,14 @@
     if (dom.btnFunApply) dom.btnFunApply.addEventListener('click', applyFunConfig);
     if (dom.btnFunTest) dom.btnFunTest.addEventListener('click', testFunWeather);
     if (dom.qwKeyClear) dom.qwKeyClear.addEventListener('click', clearFunKey);
+    if (dom.btnQwKeywordAdd) dom.btnQwKeywordAdd.addEventListener('click', addFunKeyword);
+    if (dom.btnQwKeywordReset) dom.btnQwKeywordReset.addEventListener('click', resetFunKeywords);
+    if (dom.qwKeywordInput) {
+      dom.qwKeywordInput.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); addFunKeyword(); }
+      });
+      dom.qwKeywordInput.addEventListener('input', function () { clearFieldErrors(FUN_FIELDS); });
+    }
     [dom.qwHost, dom.qwCity, dom.qwKey].forEach(function (el) {
       if (!el) return;
       el.addEventListener('input', function () {
@@ -5278,8 +5386,8 @@
         if (ev.key === 'Enter') { ev.preventDefault(); applyFunConfig(); }
       });
     });
-    if (dom.funEnabled) {
-      dom.funEnabled.addEventListener('change', function () { clearFieldErrors(FUN_FIELDS); });
+    if (dom.weatherEnabled) {
+      dom.weatherEnabled.addEventListener('change', function () { clearFieldErrors(FUN_FIELDS); });
     }
 
     /* ----- M6：风控设置（对话行为） ----- */

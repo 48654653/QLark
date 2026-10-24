@@ -506,6 +506,54 @@ button { font-family: inherit; font-size: inherit; color: inherit; }
 .tag.warn { color: var(--warn); background: var(--warn-soft); border-color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .tag.err { color: var(--err); background: var(--err-soft); border-color: var(--err); border-color: color-mix(in srgb, var(--err) 35%, transparent); }
 
+/* ----- 趣味功能：可编辑的触发词表 ----- */
+.kw-count {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-left: 6px;
+}
+.kw-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elev-2);
+}
+.kw-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  font-size: 12.5px;
+}
+.kw-text { line-height: 1.4; }
+.kw-del {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 999px;
+}
+.kw-del:hover { color: var(--err); background: var(--err-soft); }
+.kw-empty { color: var(--text-dim); font-size: 12.5px; padding: 4px 2px; }
+.kw-add { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.kw-add .input { flex: 1 1 220px; }
+
 .runtime-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

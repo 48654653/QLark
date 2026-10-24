@@ -9,9 +9,11 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..settings import Settings
+from .weather import DEFAULT_KEYWORDS
 
 #: 和风的专属域名后缀。公共域名（api.qweather.com / devapi.qweather.com）已经
 #: 返回 ``Invalid Host`` —— API Host 本身就是认证的一部分，所以必须校验这个后缀。
@@ -22,6 +24,13 @@ DEFAULT_CITY = "北京"
 
 #: 城市名长度上限（和风侧也用不到更长的）
 CITY_MAX_CHARS = 20
+
+#: 触发词表的上限：条数与单条长度
+KEYWORD_MAX_ITEMS = 30
+KEYWORD_MAX_CHARS = 12
+
+#: 分隔符（用户可能粘一行逗号/顿号/换行的词进来）
+_KEYWORD_SPLIT = re.compile(r"[\n,，、;；]+")
 
 
 def mask(value: str | None) -> str:
@@ -53,11 +62,54 @@ def is_valid_host(host: str) -> bool:
     return bool(host) and host.endswith(HOST_SUFFIX) and len(host) > len(HOST_SUFFIX)
 
 
+def weather_on(settings: Settings) -> bool:
+    """天气开关。
+
+    v2.3.2 起"每个功能各自一个开关"，所以主键是 ``weather_enabled``；
+    之前那版只有一个 ``fun_enabled`` 总开关，这里做兼容（没设新键就沿用旧键）。
+    """
+    value = settings.get("weather_enabled")
+    if value is None:
+        return bool(settings.get("fun_enabled", False))
+    return bool(value)
+
+
+def normalize_keywords(raw: Any) -> list[str]:
+    """把用户输入（数组或一行逗号/顿号/换行分隔的词）归一成词表。"""
+    if isinstance(raw, str):
+        parts: list[str] = _KEYWORD_SPLIT.split(raw)
+    elif isinstance(raw, (list, tuple, set)):
+        parts = [str(item) for item in raw]
+    else:
+        parts = []
+
+    result: list[str] = []
+    for part in parts:
+        word = " ".join(str(part).split())
+        if not word:
+            continue
+        word = word[:KEYWORD_MAX_CHARS]
+        if word not in result:
+            result.append(word)
+        if len(result) >= KEYWORD_MAX_ITEMS:
+            break
+    return result
+
+
+def keywords(settings: Settings) -> list[str]:
+    """当前生效的触发词表。空表 = 用内置默认（用户清空不该等于"永不再查"）。"""
+    items = normalize_keywords(settings.get("weather_keywords"))
+    return items or list(DEFAULT_KEYWORDS)
+
+
 def snapshot(settings: Settings) -> dict[str, Any]:
     key = str(settings.get("qweather_key") or "")
     return {
         "ok": True,
-        "fun_enabled": bool(settings.get("fun_enabled", False)),
+        "weather_enabled": weather_on(settings),
+        "weather_keywords": keywords(settings),
+        # 默认词表也回给前端：「恢复默认」按钮直接用，避免前后端各存一份
+        "weather_default_keywords": list(DEFAULT_KEYWORDS),
         "qweather_host": str(settings.get("qweather_host") or ""),
         "qweather_city": str(settings.get("qweather_city") or DEFAULT_CITY),
         "qweather_key_masked": mask(key),
@@ -85,8 +137,22 @@ def apply(settings: Settings, payload: dict[str, Any] | None = None) -> dict[str
     errors: dict[str, str] = {}
     updates: dict[str, Any] = {}
 
-    enabled = _as_bool(payload.get("fun_enabled", settings.get("fun_enabled", False)))
+    if "weather_enabled" in payload:
+        enabled = _as_bool(payload.get("weather_enabled"))
+    elif "fun_enabled" in payload:  # 老前端兼容（那时只有一个总开关）
+        enabled = _as_bool(payload.get("fun_enabled"))
+    else:
+        enabled = weather_on(settings)
+    updates["weather_enabled"] = enabled
+    # 旧键同步写一份：万一回退到 v2.3.1 的界面，开关状态还是对的
     updates["fun_enabled"] = enabled
+
+    if "weather_keywords" in payload:
+        words = normalize_keywords(payload.get("weather_keywords"))
+        if enabled and not words:
+            errors["weather_keywords"] = "开天气功能至少要留一个触发词（或点「恢复默认」）"
+        else:
+            updates["weather_keywords"] = words
 
     if "qweather_host" in payload:
         host = normalize_host(payload.get("qweather_host"))
@@ -95,7 +161,7 @@ def apply(settings: Settings, payload: dict[str, Any] | None = None) -> dict[str
                 "API Host 应该形如 xxx.re.qweatherapi.com（控制台「设置」里那一行）"
             )
         elif not host and enabled:
-            errors["qweather_host"] = "启用趣味功能必须填写和风 API Host"
+            errors["qweather_host"] = "开天气功能必须填写和风 API Host"
         else:
             updates["qweather_host"] = host
 
@@ -124,9 +190,9 @@ def apply(settings: Settings, payload: dict[str, Any] | None = None) -> dict[str
         final_host = str(updates.get("qweather_host", settings.get("qweather_host") or ""))
         final_key = str(updates.get("qweather_key", settings.get("qweather_key") or ""))
         if not final_host and "qweather_host" not in errors:
-            errors["qweather_host"] = "启用趣味功能必须填写和风 API Host"
+            errors["qweather_host"] = "开天气功能必须填写和风 API Host"
         if not final_key and "qweather_key" not in errors:
-            errors["qweather_key"] = "启用趣味功能必须填写和风 API Key"
+            errors["qweather_key"] = "开天气功能必须填写和风 API Key"
 
     if errors:
         return {"ok": False, "errors": errors}
@@ -158,10 +224,15 @@ __all__ = [
     "CITY_MAX_CHARS",
     "DEFAULT_CITY",
     "HOST_SUFFIX",
+    "KEYWORD_MAX_CHARS",
+    "KEYWORD_MAX_ITEMS",
     "apply",
     "is_valid_host",
+    "keywords",
     "mask",
     "normalize_host",
+    "normalize_keywords",
     "resolve",
     "snapshot",
+    "weather_on",
 ]

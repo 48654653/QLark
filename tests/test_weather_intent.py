@@ -22,9 +22,10 @@ FAKE_BRIEF = "成都现在 18℃ 阴，体感 17℃，北风2级，湿度 85%。
 
 @pytest.fixture
 def weather_ready(ready, monkeypatch):
-    """打开趣味功能，并把和风的 HTTP 换成固定结果。"""
+    """打开天气功能，并把和风的 HTTP 换成固定结果。"""
     ready.settings.update(
-        fun_enabled=True,
+        weather_enabled=True,
+        weather_keywords=[],  # 空 = 用内置默认词表
         qweather_host="demo1234.re.qweatherapi.com",
         qweather_key="fake-key-0123456789abcdef",
         qweather_city="北京",
@@ -34,7 +35,10 @@ def weather_ready(ready, monkeypatch):
     monkeypatch.setattr(
         fun_weather.QWeather, "brief", lambda self, city: f"{city}现在 18℃ 阴，体感 17℃，北风2级，湿度 85%。今天 小雨 20/15℃。"
     )
+    # 逐条测试都从"没聊过天气"开始，否则话题延续会让计数断言飘
     ready.bot.pipeline._weather_cache.clear()
+    ready.bot.pipeline._weather_seen.clear()
+    ready.bot.pipeline._weather_last_city.clear()
     return ready
 
 
@@ -105,7 +109,7 @@ def test_weather_failure_does_not_break_the_reply(weather_ready, fake_openai: Fa
 
 
 def test_weather_ignored_when_fun_disabled(weather_ready, fake_openai: FakeOpenAI) -> None:
-    weather_ready.settings.update(fun_enabled=False)
+    weather_ready.settings.update(weather_enabled=False)
     fake_openai.reset()
     # 开关关着时只有"回复"这一次调用，所以队列里只放一条
     fake_openai.replies('{"messages": ["嗯"]}', repeat_last=True)
@@ -116,6 +120,24 @@ def test_weather_ignored_when_fun_disabled(weather_ready, fake_openai: FakeOpenA
     assert "【实时天气】" not in joined
     # 开关关着时连意图解析都不该发生：只有一次回复请求
     assert len(fake_openai.requests()) == 1
+
+
+def test_custom_keyword_table_controls_trigger(weather_ready, fake_openai: FakeOpenAI) -> None:
+    """词表换了，触发条件就跟着换：这是"可编辑数据表"的核心承诺。"""
+    weather_ready.settings.update(weather_keywords=["紫外线"])
+
+    # "天气"已经不在表里、也没在聊天气 → 不触发，只有一次回复调用
+    fake_openai.reset()
+    fake_openai.replies('{"messages": ["成都天气还行吧"]}', repeat_last=True)
+    _say(weather_ready, "成都天气怎么样", message_id=935)
+    assert len(fake_openai.requests()) == 1
+    assert "【实时天气】" not in _system_and_user(fake_openai.requests()[-1])
+
+    # 表里有的"紫外线" → 意图调用 + 查天气 + 注入
+    fake_openai.reset()
+    fake_openai.replies('{"city": "成都"}', '{"messages": ["成都紫外线中等"]}', repeat_last=True)
+    _say(weather_ready, "成都紫外线强吗", message_id=936)
+    assert "【实时天气】" in _system_and_user(fake_openai.requests()[-1])
 
 
 def test_weather_cache_avoids_second_api_call(weather_ready, fake_openai: FakeOpenAI, monkeypatch) -> None:

@@ -124,6 +124,67 @@ def test_resolve_prefers_form_values(settings: Settings) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 开关与触发词表（v2.3.2：每个功能一个小开关，没有总开关）
+# --------------------------------------------------------------------------- #
+def test_weather_on_defaults_off(settings: Settings) -> None:
+    assert fun_config.weather_on(settings) is False
+
+
+def test_weather_on_falls_back_to_legacy_fun_enabled(settings: Settings) -> None:
+    """v2.3.1 只有一个总开关 fun_enabled，新键没设时沿用旧值。"""
+    settings.update(fun_enabled=True)
+    assert fun_config.weather_on(settings) is True
+    settings.update(weather_enabled=False)
+    assert fun_config.weather_on(settings) is False, "新键一旦设过就以新键为准"
+
+
+def test_keywords_default_when_unset(settings: Settings) -> None:
+    from qlark.fun.weather import DEFAULT_KEYWORDS
+
+    assert fun_config.keywords(settings) == list(DEFAULT_KEYWORDS)
+
+
+def test_keywords_can_be_replaced(settings: Settings) -> None:
+    settings.update(weather_keywords=["紫外线", "闷热"])
+    assert fun_config.keywords(settings) == ["紫外线", "闷热"]
+
+
+def test_normalize_keywords_trims_and_dedupes() -> None:
+    words = fun_config.normalize_keywords(" 下雨 , 下雨， 带伞\n\n  紫外线  ")
+    assert words == ["下雨", "带伞", "紫外线"]
+
+
+def test_apply_rejects_empty_keywords_when_enabled(settings: Settings) -> None:
+    result = fun_config.apply(
+        settings,
+        {
+            "weather_enabled": True,
+            "weather_keywords": [],
+            "qweather_host": HOST,
+            "qweather_key": KEY,
+        },
+    )
+    assert result["ok"] is False
+    assert "weather_keywords" in result["errors"]
+
+
+def test_apply_saves_keywords_and_keeps_legacy_key_in_sync(settings: Settings) -> None:
+    result = fun_config.apply(
+        settings,
+        {
+            "weather_enabled": True,
+            "weather_keywords": ["闷热", "紫外线"],
+            "qweather_host": HOST,
+            "qweather_key": KEY,
+        },
+    )
+    assert result["ok"] is True
+    assert settings.get("weather_keywords") == ["闷热", "紫外线"]
+    assert settings.get("fun_enabled") is True, "旧键要同步写，回退版本时开关状态才对"
+    assert result["weather_default_keywords"], "快照要带默认词表，供「恢复默认」用"
+
+
+# --------------------------------------------------------------------------- #
 # 关键词粗筛（只是省钱的前置过滤，判断"要不要查"由模型做）
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
@@ -141,6 +202,14 @@ def test_weather_hint_misses(text: str) -> None:
     from qlark.fun.weather import looks_like_weather_question
 
     assert not looks_like_weather_question(text), text
+
+
+def test_custom_keywords_are_respected() -> None:
+    from qlark.fun.weather import looks_like_weather_question
+
+    # 自定义表里没有"天气"了 → 不再触发
+    assert not looks_like_weather_question("成都天气怎么样", ["紫外线"])
+    assert looks_like_weather_question("今天紫外线强吗", ["紫外线"])
 
 
 # --------------------------------------------------------------------------- #
