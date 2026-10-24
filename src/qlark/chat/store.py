@@ -131,6 +131,7 @@ class MessageStore:
         *,
         has_image: bool = False,
         media: Iterable[str] | None = None,
+        video: str | None = None,
         tokens: int = 0,
         msg_id: str | None = None,
         created_at: int | None = None,
@@ -141,17 +142,22 @@ class MessageStore:
             media: 这一条附带的图片**文件名**（不是完整路径，也不是 base64）。
                 图片本身落在 ``<用户数据目录>/media/``，这里只记名字，
                 上下文组装时按需读回来 —— **绝不能把 base64 写进数据库**。
+            video: 这一条附带的**视频直链**（NapCat 给的 http(s) 地址）。
+                只存一条、只回放最近那一条 —— 视频比图片贵得多
+                （实测 1MB 短视频约 1100 token）。
         """
         names = [str(name) for name in (media or []) if name]
+        url = str(video or "").strip() or None
         self._db.execute(
-            "INSERT INTO messages(memory_key, role, content, has_image, media, tokens, "
-            "msg_id, created_at, summarized) VALUES(?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO messages(memory_key, role, content, has_image, media, video, "
+            "tokens, msg_id, created_at, summarized) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (
                 key,
                 role,
                 content,
                 1 if has_image else 0,
                 json.dumps(names, ensure_ascii=False) if names else None,
+                url,
                 int(tokens),
                 msg_id,
                 int(created_at if created_at is not None else time.time()),
@@ -183,17 +189,34 @@ class MessageStore:
         Returns:
             ``[(role, content, [文件名, ...])]``，按时间正序；没有图的条目是空列表。
         """
+        rows = self.recent_rounds_with_media_and_video(key, rounds, media_rounds)
+        return [(role, content, media) for role, content, media, _video, _at in rows]
+
+    def recent_rounds_with_media_and_video(
+        self, key: str, rounds: int, media_rounds: int = 0
+    ) -> list[tuple[str, str, list[str], str | None, int]]:
+        """在 :meth:`recent_rounds_with_media` 基础上再带上视频直链与时间。
+
+        视频**不按轮数回溯**：每一条带视频的消息都把直链原样返回，由调用方
+        决定只回放最近那一条（``[视频]`` 很贵：实测 1MB 短视频约 1100 token）。
+        这里不做截断，是为了让"最近一次"的判定留在流水线里，逻辑只有一处；
+        ``created_at`` 一起带出去，是因为直链带 ``rkey``、约 2 小时就过期。
+
+        Returns:
+            ``[(role, content, [图片文件名, ...], 视频直链或 None, created_at)]``，按时间正序。
+        """
         if rounds <= 0:
             return []
         rows = self._db.query(
-            "SELECT role, content, media FROM messages WHERE memory_key = ? "
-            "ORDER BY id DESC LIMIT ?",
+            "SELECT role, content, media, "
+            "  CASE WHEN video IS NULL THEN '' ELSE video END AS video, created_at "
+            "FROM messages WHERE memory_key = ? ORDER BY id DESC LIMIT ?",
             (key, int(rounds) * 2),
         )
         ordered = list(reversed(rows))
         # 最近 media_rounds 轮 = 最后 media_rounds*2 条
         keep_from = max(0, len(ordered) - max(0, int(media_rounds)) * 2)
-        out: list[tuple[str, str, list[str]]] = []
+        out: list[tuple[str, str, list[str], str | None, int]] = []
         for index, row in enumerate(ordered):
             media: list[str] = []
             if index >= keep_from:
@@ -206,7 +229,16 @@ class MessageStore:
                             media = [str(name) for name in loaded if name]
                     except ValueError:
                         media = []
-            out.append((str(row["role"]), str(row["content"]), media))
+            video = str(row["video"] or "").strip() or None
+            out.append(
+                (
+                    str(row["role"]),
+                    str(row["content"]),
+                    media,
+                    video,
+                    int(row["created_at"] or 0),
+                )
+            )
         return out
 
     def message_count(self, key: str) -> int:
@@ -396,7 +428,7 @@ class MessageStore:
     def memory_messages(self, key: str, *, limit: int = 500) -> list[dict[str, Any]]:
         """某个记忆键的原文（时间正序），供面板查看/编辑/删除。"""
         rows = self._db.query(
-            "SELECT id, role, content, has_image, tokens, created_at, summarized "
+            "SELECT id, role, content, has_image, media, video, tokens, created_at, summarized "
             "FROM messages WHERE memory_key = ? ORDER BY id ASC LIMIT ?",
             (key, int(limit)),
         )

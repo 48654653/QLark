@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content     TEXT    NOT NULL,
   has_image   INTEGER DEFAULT 0,
   media       TEXT    DEFAULT NULL,       -- JSON 数组：本条的图片文件名
+  video       TEXT    DEFAULT NULL,       -- 本条附带的视频直链（上下文只回放最近一条）
   tokens      INTEGER DEFAULT 0,
   msg_id      TEXT,                       -- OneBot 消息 ID，用于去重
   created_at  INTEGER NOT NULL,

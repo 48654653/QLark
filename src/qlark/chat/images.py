@@ -81,11 +81,18 @@ def is_local_url(url: str) -> bool:
     return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.startswith("127.")
 
 
-def build_user_content(text: str, images: Iterable[PreparedImage]) -> list[dict[str, Any]]:
-    """把文本与图片拼成 OpenAI 兼容的多模态 ``content`` 数组。
+def build_user_content(
+    text: str,
+    images: Iterable[PreparedImage],
+    videos: Iterable[Any] = (),
+) -> list[dict[str, Any]]:
+    """把文本与图片/视频拼成 OpenAI 兼容的多模态 ``content`` 数组。
 
     文本放在最前面：多数视觉模型对"先给指令再给图"的遵循度更好，而且这样
     在模型不支持图片时，至少还能看到用户在说什么。
+
+    ``videos`` 里放的是 :class:`~qlark.onebot.segments.VideoRef`，会被拼成
+    ``{"type": "video_url", ...}`` —— **不下载、不解码**，直链直接交给模型。
     """
     parts: list[dict[str, Any]] = []
     clean = str(text or "").strip()
@@ -93,6 +100,10 @@ def build_user_content(text: str, images: Iterable[PreparedImage]) -> list[dict[
         parts.append({"type": "text", "text": clean})
     for image in images:
         parts.append(image.to_segment())
+    for video in videos:
+        segment = getattr(video, "to_segment", None)
+        if callable(segment):
+            parts.append(segment())
     return parts
 
 
@@ -309,10 +320,14 @@ _VISION_HINTS = (
     "multimodal",
     "content type",
     "image_url",
+    # 视频同理：只支持图片的模型收到 video_url 会明确报错
+    "video",
+    "video_url",
     # 中文服务端的措辞
     "图片",
     "图像",
     "视觉",
+    "视频",
     "多模态",
 )
 

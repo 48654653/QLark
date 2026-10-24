@@ -58,6 +58,11 @@ DEFAULTS: dict[str, Any] = {
     "max_images_per_message": 3,
     #: 是否把图片交给视觉模型（关掉则一律降级成 [图片] 占位）
     "image_understanding": True,
+    #: 是否把视频交给模型（走原生 ``video_url``，不下载不抽帧）。
+    #: 关掉则一律降级成 [视频] 占位。
+    "video_understanding": True,
+    #: 带视频的请求超时（秒）。服务端要先下载解码整段视频，默认 60s 不够。
+    "video_timeout_s": 180,
 
     # ---- 随机分段回复 / 表情包回复 ----
     #

@@ -33,7 +33,7 @@ from ..napcat.logbus import LogBus
 from ..onebot.client import OneBotClient, OneBotError
 from ..onebot.events import GROUP, MessageEvent, describe_event, parse_message_event
 from ..onebot.sender import ReplySender
-from ..onebot.segments import ParsedMessage, parse_segments
+from ..onebot.segments import ParsedMessage, VideoRef, parse_segments
 from ..settings import Settings
 from ..storage.db import Database
 from .commands import CommandRouter
@@ -86,6 +86,27 @@ IMAGE_CHAR_COST = 1024
 
 #: 存进记忆的图片占位文本
 IMAGE_PLACEHOLDER = "[图片]"
+
+#: 存进记忆的视频占位文本
+VIDEO_PLACEHOLDER = "[视频]"
+
+#: 一段视频在上下文预算里折合多少"字符"。
+#:
+#: 实测（mimo，1MB 短视频）：``prompt_tokens_details.video_tokens`` = 1104。
+#: 按 4 字符 ≈ 1 token 折算约 4400 字符 —— 比一张图贵 4 倍多，
+#: 所以历史里**只回放最近那一段**，不能像图片那样按轮数回溯。
+VIDEO_CHAR_COST = 4400
+
+#: 带视频的请求用多长的超时（秒）。
+#:
+#: 服务端得先把整段视频拉下来解码：实测 1MB 的短视频从发出到首字节就要 60s 上下，
+#: 用客户端默认的 60s 会**必然踩线**。所以带视频时显式放宽。
+VIDEO_TIMEOUT_S = 180.0
+
+#: 视频直链的有效期（秒）。NapCat 给的 URL 带 ``rkey``，约 2 小时过期。
+#:
+#: 历史里回放超过这个时长的直链只会让服务端报错，不如直接按占位文本处理。
+VIDEO_URL_TTL_S = 90 * 60
 
 #: 长期记忆块的标签（需求规格 §6.3 组装请求时的上下文）
 SUMMARY_BLOCK_LABEL = "[长期记忆]"
@@ -217,6 +238,8 @@ def _content_cost(content: Any) -> int:
             continue
         if part.get("type") == "image_url":
             total += IMAGE_CHAR_COST
+        elif part.get("type") == "video_url":
+            total += VIDEO_CHAR_COST
         else:
             total += len(str(part.get("text") or ""))
     return total
@@ -229,6 +252,16 @@ def _strip_image_placeholders(text: str) -> str:
     "这里有两张图"，甚至去描述那个并不存在的占位符。
     """
     cleaned = str(text or "").replace(IMAGE_PLACEHOLDER, " ")
+    return " ".join(cleaned.split())
+
+
+def _strip_video_placeholders(text: str) -> str:
+    """去掉文本里的 ``[视频]`` 占位。
+
+    和图片同理：视频真身已经以 ``video_url`` 段附上了，正文里再留一条
+    ``[视频]`` 会让模型以为自己"只收到一个占位符"，然后如实回答"看不到"。
+    """
+    cleaned = str(text or "").replace(VIDEO_PLACEHOLDER, " ")
     return " ".join(cleaned.split())
 
 
@@ -269,16 +302,46 @@ def build_labeled_message(name: str, timestamp: float | int | None, text: str) -
     return f"昵称：{name}\n时间：{format_stamp(timestamp)}\n消息：{text}"
 
 
-def _replace_user_content(
+def _strip_media_parts(
     messages: list[dict[str, Any]], text: str
 ) -> list[dict[str, Any]]:
-    """把最后一条 user 消息的多模态内容换回纯文本（视觉降级用）。"""
+    """把多模态内容全部换回纯文本（视觉降级用）。
+
+    只换最后一条 user 是不够的 —— v2 起**历史里也会带真实的图和视频**，
+    模型不支持多模态时那些段同样会让请求失败。所以这里逐条处理：
+    文本段照旧、图片/视频段退化成占位符。
+
+    最后一条 user 消息直接用调用方给的 ``text``（就是落库的那份带占位符的记忆文本），
+    保证降级后的上下文和原来的措辞一致。
+    """
     result = [dict(message) for message in messages]
     for message in reversed(result):
-        if message.get("role") == "user":
-            message["content"] = text or IMAGE_PLACEHOLDER
-            break
-    return result
+        if message.get("role") != "user":
+            continue
+        message["content"] = text or IMAGE_PLACEHOLDER
+        break
+    cleaned: list[dict[str, Any]] = []
+    for message in result:
+        content = message.get("content")
+        if isinstance(content, list):
+            pieces: list[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                kind = str(part.get("type") or "")
+                if kind == "text":
+                    pieces.append(str(part.get("text") or ""))
+                elif kind == "image_url":
+                    pieces.append(IMAGE_PLACEHOLDER)
+                elif kind == "video_url":
+                    pieces.append(VIDEO_PLACEHOLDER)
+            joined = " ".join(piece for piece in pieces if piece).strip()
+            if not joined:
+                # 整条只剩媒体段、又把占位符也剥掉了 → 这条干脆不发
+                continue
+            message["content"] = joined
+        cleaned.append(message)
+    return cleaned
 
 
 @dataclass
@@ -293,6 +356,8 @@ class PipelineStats:
     summaries: int = 0
     #: 图片成功交给视觉模型的次数（M5）
     images: int = 0
+    #: v2.3：视频成功交给模型的次数（原生 video_url）
+    videos: int = 0
     #: 因为模型不支持视觉而降级成纯文本的次数（M5）
     vision_fallbacks: int = 0
     #: 命中敏感词被拦下的条数（M6 风控）
@@ -321,6 +386,7 @@ class PipelineStats:
             "commands": self.commands,
             "summaries": self.summaries,
             "images": self.images,
+            "videos": self.videos,
             "vision_fallbacks": self.vision_fallbacks,
             "blocked": self.blocked,
             "rate_limited": self.rate_limited,
@@ -750,10 +816,24 @@ class MessagePipeline:
             head = "\n".join(blocks)
             visible_text = f"{head}\n{visible_text}" if visible_text else head
 
-        if prepared:
-            visible = visible_text or "请看这张图片。"
+        # ---- 视频：交给模型自己看（``video_url`` 段） ----
+        #
+        # 模型**原生支持视频直链**，所以 QLark 不下载、不抽帧、不解码 ——
+        # 直接把 NapCat 给的 url 塞进请求，服务端自己拉取解码。
+        # 代价是贵（实测 1MB ≈ 1100 video token）且慢（要等它下完），
+        # 所以**整个上下文只保留最近那一段**：这一轮发的 / 引用的优先，
+        # 都没有时由 ``_history_for_context`` 从历史里挑最近的一条。
+        videos = self._pick_videos(parsed, quoted, forwards)
+        if videos:
+            # 真身都附上了，正文里再留 [视频] 会让模型以为"只收到占位符"
+            visible_text = _strip_video_placeholders(visible_text)
+
+        if prepared or videos:
+            visible = visible_text or ("请看我发的这段视频。" if videos else "请看这张图片。")
             visible = self._label_message(event, visible)
-            user_content: str | list[dict[str, Any]] = build_user_content(visible, prepared)
+            user_content: str | list[dict[str, Any]] = build_user_content(
+                visible, prepared, videos
+            )
         elif blocks:
             user_content = self._label_message(event, visible_text)
         else:
@@ -802,7 +882,8 @@ class MessagePipeline:
 
         # 先取历史，再调模型；确认成功后才把这一轮写进记忆。
         # v2：最近几轮的图片以**真身**放回上下文，更早的退化成纯文本。
-        history = self._history_for_context(key, rounds)
+        # 视频更贵，所以只在"这一轮没带视频"时才从历史里补最近那一段。
+        history = self._history_for_context(key, rounds, allow_video=not videos)
         system_prompt = self.store.persona_prompt(persona_uid)
         history = self._fit_budget(history, system_prompt, extra_system, user_content)
         messages = build_chat_messages(
@@ -819,6 +900,7 @@ class MessagePipeline:
             messages,
             prepared,
             memory_text,
+            videos=videos,
             voice_on=voice_on,
             emotions=emotions,
             delay_ms=delay_ms,
@@ -864,10 +946,12 @@ class MessagePipeline:
 
         # 发送成功后才落库，保证记忆里不会出现"有问无答"的空洞。
         # 用户说的存 memory_text（含 [图片] 占位），**绝不能把 base64 写进记忆**；
+        # 视频只存**直链**（一条），下一轮"刚才那个视频"还能看到画面。
         # 机器人自己说的存**模型原始输出**（v2 起就是那个 JSON）—— 见
         # ReplyPlan.memory_text 上对"为什么要存 JSON"的说明。
         self.store.append(
             key, "user", memory_text, has_image=parsed.has_image, media=media_names,
+            video=self._video_url(videos),
             msg_id=event.message_id, created_at=event.time or None,
         )
         self.store.append(
@@ -983,6 +1067,49 @@ class MessagePipeline:
         except (TypeError, ValueError):
             return fallback
 
+    # ------------------------------------------------------------------ 视频
+    def _video_enabled(self) -> bool:
+        return bool(self.settings.get("video_understanding", True))
+
+    def _video_timeout(self) -> float:
+        """带视频的请求超时：服务端要先下载解码，默认的 60s 不够。"""
+        return max(30.0, self._setting_float("video_timeout_s", VIDEO_TIMEOUT_S))
+
+    @staticmethod
+    def _video_url(videos: list[VideoRef] | None) -> str | None:
+        for video in videos or []:
+            url = str(video.url or "").strip()
+            if url:
+                return url
+        return None
+
+    def _pick_videos(
+        self,
+        parsed: ParsedMessage,
+        quoted: QuotedContent,
+        forwards: QuotedContent | None = None,
+    ) -> list[VideoRef]:
+        """这一轮要附上哪一段视频。**最多一段。**
+
+        优先级：本条消息里的视频 > 被引用的那条消息里的视频 > 转发的聊天记录里的。
+        历史里更早的视频不在这里补 —— 那是 ``_history_for_context`` 的事，
+        而且只有"这一轮没带视频"时才会去补。
+        """
+        if not self._video_enabled():
+            return []
+        collected = list(parsed.videos) + list(quoted.videos)
+        if forwards is not None:
+            collected.extend(forwards.videos)
+        candidates = [video for video in collected if str(video.url or "").strip()]
+        if not candidates:
+            return []
+        if len(candidates) > 1:
+            self._log(
+                f"这一轮有 {len(candidates)} 段视频，只把最近的一段交给模型",
+                level="debug",
+            )
+        return candidates[:1]
+
     def _plan_reply(
         self,
         persona: dict[str, Any] | None,
@@ -990,6 +1117,7 @@ class MessagePipeline:
         prepared: list[PreparedImage],
         memory_text: str,
         *,
+        videos: list[VideoRef] | None = None,
         voice_on: bool = False,
         emotions: list[str] | None = None,
         delay_ms: int = 0,
@@ -1005,7 +1133,9 @@ class MessagePipeline:
             "voice_max_chars": self._setting_int("voice_max_chars", 20),
             "voice_emotions": VOICE_EMOTIONS,
         }
-        result = self._complete_with_vision_fallback(persona, messages, prepared, memory_text)
+        result = self._complete_with_vision_fallback(
+            persona, messages, prepared, memory_text, videos=videos
+        )
         parsed = parse_reply(result.text, **spec)
         plan = ReplyPlan(
             texts=[],
@@ -1048,7 +1178,7 @@ class MessagePipeline:
             ]
             try:
                 follow = self._complete_with_vision_fallback(
-                    persona, retry_messages, prepared, memory_text
+                    persona, retry_messages, prepared, memory_text, videos=videos
                 )
             except LLMError as exc:
                 self._log(f"重新生成失败，不再重试：{exc}", level="warn")
@@ -1211,21 +1341,52 @@ class MessagePipeline:
         return names
 
     def _history_for_context(
-        self, key: str, rounds: int
+        self, key: str, rounds: int, *, allow_video: bool = True
     ) -> list[tuple[str, Any]]:
         """取历史；最近 ``media_history_rounds`` 轮的图片**以真身放回上下文**。
 
         更早的轮次变成纯文本（``[图片]`` 占位符会被去掉，不留空壳）。
         一张 512px 约 258 token，回溯两轮多花 500 左右，完全划得来。
+
+        视频规则不一样：**整个上下文只保留最近那一段**。视频比图贵四倍多
+        （实测 1MB ≈ 1100 video token），而且"刚才那个视频"指的一定是最新那段。
+        所以：
+          · 只有 ``allow_video``（这一轮自己没带视频）时才从历史里补；
+          · 只补**一条**（时间上最晚的那条），更早的退化成 ``[视频]`` 文本；
+          · 直链带 ``rkey`` 约 2 小时过期，过期的干脆按占位文本处理，
+            否则服务端只会回一个"拉不到视频"的错误。
         """
         keep = self._setting_int("media_history_rounds", 2)
-        rows = self.store.recent_rounds_with_media(key, rounds, media_rounds=keep)
+        rows = self.store.recent_rounds_with_media_and_video(key, rounds, media_rounds=keep)
+
+        chosen = -1
+        if allow_video and bool(self.settings.get("video_understanding", True)):
+            now = time.time()
+            for index in range(len(rows) - 1, -1, -1):
+                url = rows[index][3]
+                if not url:
+                    continue
+                created = rows[index][4]
+                age = (now - float(created)) if created else 0.0
+                if age > VIDEO_URL_TTL_S:
+                    self._log(
+                        f"历史视频直链已过期（{age / 60:.0f} 分钟前），按 {VIDEO_PLACEHOLDER} 处理",
+                        level="debug",
+                    )
+                    break
+                chosen = index
+                break
+
         out: list[tuple[str, Any]] = []
-        for role, content, names in rows:
+        for index, (role, content, names, video, _created) in enumerate(rows):
             parts: list[dict[str, Any]] = []
             if names:
                 parts = self._media_parts(names)
             text = _strip_image_placeholders(content).strip()
+            if index == chosen and video:
+                # 真身要附上，正文里的占位符就必须去掉（否则模型以为只收到占位符）
+                text = _strip_video_placeholders(text)
+                parts = [*parts, VideoRef(url=video).to_segment()]
             if not parts:
                 out.append((role, text))
                 continue
@@ -1479,34 +1640,50 @@ class MessagePipeline:
         messages: list[dict[str, Any]],
         prepared: list[PreparedImage],
         memory_text: str,
+        *,
+        videos: list[VideoRef] | None = None,
     ) -> ChatResult:
-        """带图调用；模型明确表示不支持图片时，降级成纯文本再试一次。
+        """带图 / 带视频调用；模型明确表示不支持时，降级成纯文本再试一次。
 
         需求规格 §6.5：「模型不支持视觉时降级」。降级而不是直接报错，是因为
         用户至少还想知道"他发了什么文字"；而且**明确告诉用户去配视觉模型**，
         否则他会一直以为图片被看懂了。
+
+        视频走的是同一条路：模型自己按 ``video_url`` 去拉直链、解码，
+        QLark 不下载也不抽帧 —— 所以这里的"不支持"判断对图片和视频都适用。
         """
-        if not prepared:
+        videos = list(videos or [])
+        if not prepared and not videos:
             return self._llm(persona).complete(messages)
 
         vision_model = str(self.settings.get("vision_model") or "").strip()
         client = self._llm_vision(persona) if vision_model else self._llm(persona)
+        # 视频要多等：服务端得先把整段视频拉下来解码（实测 1MB ≈ 60s）
+        timeout = self._video_timeout() if videos else None
 
         try:
-            result = client.complete(messages)
+            result = client.complete(messages, timeout=timeout)
         except LLMError as exc:
             if not looks_like_vision_unsupported(str(exc)):
                 raise
             self.stats.vision_fallbacks += 1
+            what = "视频" if videos and not prepared else "图片"
             self._log(
-                "当前模型不支持图片，已降级为纯文本。"
-                "想让机器人看懂图片，请在「模型配置 → 视觉模型」里填一个支持视觉的模型"
+                f"当前模型不支持{what}输入，已降级为纯文本。"
+                "想让机器人看懂图片/视频，请在「模型配置 → 视觉模型」里填一个支持多模态的模型"
                 f"（原始错误：{exc}）",
                 level="warn",
             )
-            return self._llm(persona).complete(_replace_user_content(messages, memory_text))
+            return self._llm(persona).complete(_strip_media_parts(messages, memory_text))
 
-        self.stats.images += 1
+        if prepared:
+            self.stats.images += 1
+        if videos:
+            self.stats.videos += 1
+            self._log(
+                f"视频已附上（{len(videos)} 段），交给模型直接看画面",
+                level="debug",
+            )
         return result
 
     def _llm_vision(self, persona: dict[str, Any] | None = None) -> OpenAIChatClient:

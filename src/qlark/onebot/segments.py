@@ -22,6 +22,8 @@ from typing import Any, Iterable
 
 #: 图片类段（M5 会把这些真正发给视觉模型）
 IMAGE_TYPES = frozenset({"image"})
+#: 视频类段（会以 ``video_url`` 段交给支持视频的模型）
+VIDEO_TYPES = frozenset({"video"})
 #: 表情类段
 FACE_TYPES = frozenset({"face", "mface", "bface", "sface"})
 #: 合并转发类段
@@ -63,6 +65,24 @@ class ImageRef:
     summary: str | None = None
 
 
+@dataclass(frozen=True)
+class VideoRef:
+    """一条视频消息的引用。
+
+    NapCat 的 ``video`` 段带 ``url``（**约 2 小时过期的直链**）和 ``file``。
+    模型侧能直接吃 ``{"type": "video_url", "video_url": {"url": ...}}``，
+    所以这个 url 会原样交给模型 —— 不需要 QLark 自己下载解码。
+    """
+
+    url: str | None = None
+    file: str | None = None
+    #: 字节数（NapCat 会以字符串给出，解析时转成 int；未知则 0）
+    size: int = 0
+
+    def to_segment(self) -> dict[str, Any]:
+        return {"type": "video_url", "video_url": {"url": str(self.url or "")}}
+
+
 @dataclass
 class ParsedMessage:
     """把消息段数组解析成"可以直接喂给模型/落库"的形态。"""
@@ -70,6 +90,8 @@ class ParsedMessage:
     #: 降级后的纯文本（含 ``[图片]`` ``[语音消息]`` 这类占位符）
     text: str = ""
     images: list[ImageRef] = field(default_factory=list)
+    #: 消息里带的视频（通常只有一条；多条时流水线只取第一条）
+    videos: list[VideoRef] = field(default_factory=list)
     #: 消息里 @ 到的 QQ 号（``all`` 表示 @全体成员）
     ats: list[str] = field(default_factory=list)
     #: 是否 @ 了机器人自己
@@ -90,8 +112,12 @@ class ParsedMessage:
         return bool(self.images)
 
     @property
+    def has_video(self) -> bool:
+        return bool(self.videos)
+
+    @property
     def is_empty(self) -> bool:
-        return not self.text.strip() and not self.images
+        return not self.text.strip() and not self.images and not self.videos
 
     def text_for_memory(self) -> str:
         """落库用的文本：图片统一压成 ``[图片]`` 占位，绝不把 base64 写进记忆。"""
@@ -122,6 +148,13 @@ def _clean_text(value: Any) -> str:
         .replace("&#44;", ",")
         .replace("&amp;", "&")
     )
+
+
+def _as_int(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
 
 
 def parse_segments(
@@ -187,6 +220,20 @@ def parse_segments(
         # ---- 表情 ----
         if seg_type in FACE_TYPES:
             parts.append("[表情]")
+            continue
+
+        # ---- 视频 ----
+        #
+        # **不下载、不解码**：把直链留着，交给模型的 ``video_url`` 段。
+        # 占位符 ``[视频]`` 仍然写进正文 —— 落库的记忆里只该有它；
+        # 只有真正发给模型的那一次才会把占位符换成视频本体。
+        if seg_type in VIDEO_TYPES:
+            url = str(data.get("url") or "").strip() or None
+            result.videos.append(
+                VideoRef(url=url, file=str(data.get("file") or "").strip() or None,
+                         size=_as_int(data.get("file_size")))
+            )
+            parts.append(PLACEHOLDER_TEXT["video"])
             continue
 
         # ---- 合并转发 ----
@@ -289,6 +336,8 @@ __all__ = [
     "PLACEHOLDER_TEXT",
     "ParsedMessage",
     "UNKNOWN_PLACEHOLDER",
+    "VIDEO_TYPES",
+    "VideoRef",
     "build_image_segment",
     "build_record_segment",
     "build_reply_segment",

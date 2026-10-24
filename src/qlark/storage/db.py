@@ -47,6 +47,8 @@ COLUMN_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         # v2：这一条附带的图片文件名（JSON 数组）。图片本身在 <数据目录>/media/，
         # 数据库里只记名字 —— base64 绝不入库。
         ("media", "TEXT DEFAULT NULL"),
+        # v2.3：这一条附带的视频直链。只存**一条**，因为上下文里只保留最近那次视频。
+        ("video", "TEXT DEFAULT NULL"),
     ],
 }
 

@@ -6,7 +6,8 @@ OneBot 的 ``reply`` 段**只带消息 ID，不带内容**，所以必须回头�
 支持的引用内容：
   · 文字
   · 图片（交给多模态，走 ``ImageRef``）
-  · 视频 / 语音 / 表情 / 文件（渲染成标记，模型至少知道"那里有个视频"）
+  · 视频（交给支持视频的模型，走 ``VideoRef`` —— 只带直链，不下载）
+  · 语音 / 表情 / 文件（渲染成标记，模型至少知道"那里有个视频"）
   · 转发的聊天记录（展开成 "甲：… / 乙：…" 的行）
 
 .. note::
@@ -20,7 +21,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-from ..onebot.segments import ImageRef
+from ..onebot.segments import ImageRef, VideoRef
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,11 @@ MAX_RENDER_CHARS = 600
 #:
 #: 一张 512px 约 258 token，三张不到 800 —— 比"看不到图"划算得多。
 MAX_QUOTED_IMAGES = 3
+#: 一次引用最多带几段视频。
+#:
+#: 固定为 1：视频很贵（实测一段 1MB 的短视频约 1100 video token），而且
+#: 上下文里只该保留**最近那一段**画面，多了纯属浪费。
+MAX_QUOTED_VIDEOS = 1
 
 #: 这些段直接给个标记就够了
 _MARKERS = {
@@ -57,6 +63,8 @@ class QuotedContent:
     text: str = ""
     #: 引用里的图片，交给多模态
     images: list[ImageRef] = field(default_factory=list)
+    #: 引用里的视频（最多一段），交给支持视频的模型
+    videos: list[VideoRef] = field(default_factory=list)
     #: 出现了哪些内容类型，仅用于日志
     kinds: list[str] = field(default_factory=list)
     #: 有没有真的取到内容
@@ -67,11 +75,19 @@ def _flatten(segments: Sequence[Any]) -> list[dict[str, Any]]:
     return [seg for seg in segments if isinstance(seg, dict)]
 
 
+def _as_int(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
 def render_segments(
     segments: Sequence[Any],
     *,
     max_chars: int = MAX_RENDER_CHARS,
     max_images: int = MAX_QUOTED_IMAGES,
+    max_videos: int = MAX_QUOTED_VIDEOS,
 ) -> QuotedContent:
     """把消息段数组渲染成一段可读文本 + 图片引用。**纯函数，好测。**"""
     content = QuotedContent()
@@ -98,6 +114,18 @@ def render_segments(
                     )
                 )
             parts.append("[图片]")
+        elif seg_type == "video":
+            # 视频不下载：模型自己会去取这个直链（``video_url`` 段）
+            if len(content.videos) < max_videos:
+                url = str(data.get("url") or "").strip() or None
+                content.videos.append(
+                    VideoRef(
+                        url=url,
+                        file=str(data.get("file") or "").strip() or None,
+                        size=_as_int(data.get("file_size")),
+                    )
+                )
+            parts.append(_MARKERS["video"])
         elif seg_type in _MARKERS:
             parts.append(_MARKERS[seg_type])
         elif seg_type in {"reply", "source"}:
@@ -110,7 +138,7 @@ def render_segments(
     if len(text) > max_chars:
         text = text[: max_chars - 1].rstrip() + "…"
     content.text = text
-    content.ok = bool(text or content.images)
+    content.ok = bool(text or content.images or content.videos)
     return content
 
 
@@ -130,6 +158,7 @@ def render_forward(nodes: Sequence[Any], *, max_nodes: int = MAX_FORWARD_NODES) 
             message = [message]
         inner = render_segments(message or [])
         content.images.extend(inner.images[: max(0, MAX_QUOTED_IMAGES - len(content.images))])
+        content.videos.extend(inner.videos[: max(0, MAX_QUOTED_VIDEOS - len(content.videos))])
         body = inner.text or "（空）"
         lines.append(f"{name}：{body}" if name else body)
 
@@ -242,6 +271,7 @@ class QuotedFetcher:
 __all__ = [
     "MAX_FORWARD_NODES",
     "MAX_QUOTED_IMAGES",
+    "MAX_QUOTED_VIDEOS",
     "MAX_RENDER_CHARS",
     "QuotedContent",
     "QuotedFetcher",
