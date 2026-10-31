@@ -1135,8 +1135,11 @@
   function markBad(input, bad) {
     if (!input) return;
     if (input.tagName === 'INPUT' && input.type === 'checkbox') return;
-    var base = (input.tagName === 'TEXTAREA') ? 'textarea' : 'input';
-    input.className = bad ? (base + ' bad') : base;
+    // 只加/去 bad 类，**不能整个覆盖 className**：
+    // 标红对象不一定是 input（触发词表就是个 .kw-table 容器），
+    // 一旦被改成 class="input"，它的高度/边框会立刻按输入框算 → 布局塌成一团。
+    if (bad) input.classList.add('bad');
+    else input.classList.remove('bad');
   }
 
   // 按字段渲染 errors，返回 {shown, unknown}；未被点名的字段自动清除错误
@@ -3021,21 +3024,21 @@
     renderFunKeywords();
   }
 
-  /** 触发词表格：每行一个词 + 删除按钮（保存时整份提交） */
+  /** 触发词表格：一行一个词 + 删除按钮（保存时整份提交） */
   function renderFunKeywords() {
-    var list = dom.qwKeywordList;
-    if (!list) return;
-    list.textContent = '';
+    var box = dom.qwKeywordList;
+    if (!box) return;
+    box.textContent = '';
     var words = S.funKeywords || [];
     setText(dom.qwKeywordCount, String(words.length));
     if (!words.length) {
-      list.appendChild(mk('li', 'kw-empty', '还没有触发词 —— 至少留一个，否则永远不会去查'));
+      box.appendChild(mk('div', 'kw-row kw-row-empty', '还没有触发词 —— 至少留一个，否则永远不会去查'));
       return;
     }
     words.forEach(function (word, index) {
-      var item = mk('li', 'kw-item');
-      item.appendChild(mk('span', 'kw-text', word));
-      var remove = mk('button', 'kw-del', '×');
+      var row = mk('div', 'kw-row');
+      row.appendChild(mk('span', 'kw-word', word));
+      var remove = mk('button', 'btn ghost sm kw-del', '删除');
       remove.type = 'button';
       remove.title = '删除「' + word + '」';
       remove.addEventListener('click', function () {
@@ -3043,8 +3046,8 @@
         clearFieldErrors(FUN_FIELDS);
         renderFunKeywords();
       });
-      item.appendChild(remove);
-      list.appendChild(item);
+      row.appendChild(remove);
+      box.appendChild(row);
     });
   }
 

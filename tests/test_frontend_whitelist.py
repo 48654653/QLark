@@ -34,6 +34,14 @@ def _function_body(name: str) -> str:
     return match.group(1)
 
 
+def _body_from(name: str) -> str:
+    """从 ``function <name>(`` 截到同缩进的第一个 ``\\n  }``（参数个数不限）。"""
+    source = APP_JS.read_text(encoding="utf-8")
+    start = source.index(f"function {name}(")
+    end = source.index("\n  }", start)
+    return source[start:end]
+
+
 @pytest.fixture(scope="module")
 def model_body() -> str:
     return _function_body("normalizeModelConfig")
@@ -161,6 +169,21 @@ def test_every_memory_item_field_reaches_the_frontend(tmp_path) -> None:
         "这些记忆字段后端给了、前端 normalizeMemoryItem 没接住："
         + "、".join(missing)
     )
+
+
+def test_mark_bad_does_not_clobber_element_classes() -> None:
+    """标红只能加/去 ``bad`` 类，不能整个覆盖 className。
+
+    真实事故：触发词表（``.kw-table`` 容器）被当成标红对象，``markBad`` 把它改成
+    ``class="input"`` —— 高度立刻按输入框算，而表格里的行照旧画出去，
+    整页从此"塌成一团"（点一下开关就复现）。改容器类名的地方一律走 classList。
+    """
+    body = _body_from("markBad")
+    assert not re.search(r"\.className\s*=", body), (
+        "markBad 又在覆盖 className 了：非 input 元素（例如触发词表的容器）"
+        "会被改成 class=\"input\"，布局直接塌掉"
+    )
+    assert "classList" in body
 
 
 def test_every_fun_config_field_reaches_the_frontend(tmp_path) -> None:
