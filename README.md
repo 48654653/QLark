@@ -6,7 +6,7 @@
 适配任何 **OpenAI API 兼容**的服务（DeepSeek / MiMo / OpenAI / 自建中转都行），
 主打 **多人设对话** 与 **长期记忆**，群聊和私聊都能用。
 
-- 版本：**v2.2** ｜ Python 3.13 ｜ 界面 pywebview（Edge WebView2）｜ 协议 OneBot 11
+- 版本：**v2.3.2** ｜ Python 3.13 ｜ 界面 pywebview（Edge WebView2）｜ 协议 OneBot 11
 
 > [!WARNING]
 > **仅供学习交流。** 请遵守腾讯 QQ 用户协议与当地法律法规。
