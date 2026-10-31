@@ -1080,10 +1080,15 @@ class MessagePipeline:
         "不要说「我查一下」「稍等」这类承诺。）"
     )
 
-    #: 功能开着、但本轮没有注入数据时，普遍禁止空头承诺
+    #: 功能开着、但本轮没有注入数据时的约束。
+    #:
+    #: 措辞必须只说"别空口承诺"，**不能说"你没有联网能力"**：
+    #: 实测踩过 —— 天气明明开着、上一轮也真查到了伦敦，模型读到
+    #: "你没有联网查询能力" 后，用户一纠正城市，它就把**正确的数据**也否了：
+    #: 「其实本鲸刚才在瞎编，我没有查天气的能力，对不起」。这种假道歉比不答更伤。
     WEATHER_NO_PROMISE_NOTE = (
-        "（你没有联网查询能力：不要把「我查一下」「稍等」当成回复；"
-        "知道就直说，不知道就说不知道。）"
+        "（手头没有实时数据时：直接说不知道就好，"
+        "不要把「我查一下」「稍等」这类话当作回复。）"
     )
 
     def _weather_ready(self) -> bool:
@@ -1118,40 +1123,52 @@ class MessagePipeline:
 
     @staticmethod
     def _looks_like_weather_followup(text: str) -> bool:
-        """天气话题里的短追问："洛宁呢" / "那明天呢" / "菏泽"。
+        """天气话题里的短追问/更正："洛宁呢" / "那明天呢" / "菏泽" / "我不在成都，我在杭州"。
 
-        只认**很短**的消息：太长的多半在聊别的（"洛阳那家汤馆真不错"）。
+        只认**很短**的消息（≤25 字）：太长的多半在聊别的。是否真去查仍由意图模型判断
+        （它会返回 ``{"city": null}``），这里只是决定"值不值得多问一次模型"。
+
+        以前还要求带"呢/吗/？"或纯地名，结果把更正句挡在外面 ——
+        用户说"我不在伦敦，我在杭州"时完全不查，模型只能顺着上一轮硬聊。
         """
         content = str(text or "").strip()
-        if not content or len(content) > 15:
-            return False
-        if any(word in content for word in ("呢", "吗", "？", "?", "怎么", "如何", "多少", "咋")):
-            return True
-        return len(content) <= 6 and not any(ch in content for ch in "，。,.！!；;")
+        return bool(content) and len(content) <= 25
 
     def _weather_system_block(self, text: str, key: str) -> str:
         """返回一段 ``【实时天气】``；没数据时返回"别承诺去查"的约束；都不需要返回空串。"""
         if not self._weather_ready():
             return ""
 
-        keyword = fun_weather.looks_like_weather_question(
-            text, fun_config.keywords(self.settings)
-        )
-        if not keyword:
+        words = fun_config.keywords(self.settings)
+        if not fun_weather.looks_like_weather_question(text, words):
             # 关键词没命中时，只有在"刚聊过天气 + 这是个短追问"的情况下才多花一次调用
             if not self._weather_recent(key) or not self._looks_like_weather_followup(text):
                 return ""
 
+        # ① 快路：句子里本来就写着城市（"成都热死了"）→ 正则取出来，GeoAPI 验证通过就用。
+        #    完全跳过意图调用：省一次 ~1s 的模型调用，也避开"意图超时 → 这轮没天气"
+        #    那个坑（实测：8s 超时，而"成都"就明晃晃写在句子里）。
+        for candidate in fun_weather.city_candidates(text, words):
+            brief = self._weather_brief(candidate, quiet=True)
+            if brief:
+                self._weather_mark(key, candidate)
+                self._log(f"天气：句子里直接认出「{candidate}」，跳过意图调用", level="debug")
+                return self._weather_use_block(brief)
+
+        # ② 慢路：城市得靠模型抽（"那明天呢""菏泽""我不在伦敦，我在杭州"）
         city = self._weather_city_from(text, key)
         if city is None:
             # 模型明确判断不需要实时数据（例如"热干面真好吃"）
             return ""
-
         self._weather_mark(key, city)
         city = city or str(self.settings.get("qweather_city") or fun_config.DEFAULT_CITY)
         brief = self._weather_brief(city)
         if not brief:
             return self.WEATHER_NO_DATA_NOTE
+        return self._weather_use_block(brief)
+
+    @staticmethod
+    def _weather_use_block(brief: str) -> str:
         return (
             f"【实时天气】{brief}\n"
             "（上面是刚刚查到的真实数据，请直接用；"
@@ -1196,8 +1213,11 @@ class MessagePipeline:
             return None
         return str(city).strip()
 
-    def _weather_brief(self, city: str) -> str:
-        """查天气（带缓存）。失败返回空串，绝不影响回复。"""
+    def _weather_brief(self, city: str, quiet: bool = False) -> str:
+        """查天气（带缓存）。失败返回空串，绝不影响回复。
+
+        ``quiet=True`` 用于"正则猜出来的候选城市"：猜错很正常，不该刷 WARN。
+        """
         cached = self._weather_cache.get(city)
         if cached:
             self._log(f"天气命中缓存：{city}", level="debug")
@@ -1212,7 +1232,10 @@ class MessagePipeline:
             )
             brief = client.brief(city)
         except fun_weather.WeatherError as exc:
-            self._log(f"天气查询失败（{city}）：{exc}", level="warn")
+            self._log(
+                f"天气查询失败（{city}）：{exc}",
+                level="debug" if quiet else "warn",
+            )
             return ""
         except Exception as exc:  # noqa: BLE001 - 天气不能拖垮回复
             log.exception("天气查询未预期失败")

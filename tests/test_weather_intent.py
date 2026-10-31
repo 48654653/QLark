@@ -67,8 +67,8 @@ def _system_and_user(payload: dict) -> str:
 
 def test_weather_is_injected_into_the_reply(weather_ready, fake_openai: FakeOpenAI) -> None:
     fake_openai.reset()
-    # 第一次：意图解析；第二次：正常回复
-    fake_openai.replies('{"city": "成都"}', '{"messages": ["成都 18℃，阴，出门带件外套"]}', repeat_last=True)
+    # 「成都天气怎么样」走快路：城市直接从句子里取，只有回复这一次调用
+    fake_openai.replies('{"messages": ["成都 18℃，阴，出门带件外套"]}', repeat_last=True)
 
     _say(weather_ready, "成都天气怎么样")
 
@@ -78,6 +78,46 @@ def test_weather_is_injected_into_the_reply(weather_ready, fake_openai: FakeOpen
     assert "成都现在 18℃ 阴" in joined
     assert weather_ready.bot.pipeline.stats.weathers >= 1
     assert _reply_texts(weather_ready.home), "注入天气后仍要正常回复"
+
+
+def test_city_in_sentence_skips_the_intent_call(weather_ready, fake_openai: FakeOpenAI) -> None:
+    """「成都热死了」里的城市直接取出来，不再花一次模型调用（实测那次 8s 超时就死在这）。"""
+    fake_openai.reset()
+    fake_openai.replies('{"messages": ["成都 19℃ 是挺闷的"]}', repeat_last=True)
+
+    _say(weather_ready, "成都热死了", message_id=960)
+
+    payloads = fake_openai.requests()
+    assert len(payloads) == 1, f"不该有意图调用，实际打了 {len(payloads)} 次"
+    joined = _system_and_user(payloads[0])
+    assert "【实时天气】" in joined
+    assert "成都现在 18℃ 阴" in joined
+
+
+def test_bad_city_guess_falls_back_to_intent(
+    weather_ready, fake_openai: FakeOpenAI, monkeypatch
+) -> None:
+    """猜出来的名字查不到时，退回意图调用，而不是拿错城市硬答。"""
+    known = {"成都", "北京", "杭州", "伦敦", "洛阳", "菏泽", "洛宁"}
+
+    def brief(self, city):  # noqa: ANN001
+        if city not in known:
+            raise fun_weather.WeatherError("没有找到城市")
+        return f"{city}现在 18℃ 阴。"
+
+    monkeypatch.setattr(fun_weather.QWeather, "brief", brief)
+    fake_openai.reset()
+    fake_openai.replies('{"city": "火星"}', '{"messages": ["火星我查不到"]}', repeat_last=True)
+
+    _say(weather_ready, "火星天气预报", message_id=961)
+
+    payloads = fake_openai.requests()
+    assert len(payloads) >= 2, "猜错城市后应当退回意图调用"
+    intent_text = _system_and_user(payloads[0])
+    assert "意图" in intent_text or "intent" in intent_text.lower() or "JSON" in intent_text
+    joined = _system_and_user(payloads[-1])
+    assert "【实时天气】" not in joined
+    assert _reply_texts(weather_ready.home)
 
 
 def test_weather_skipped_when_model_says_not_needed(weather_ready, fake_openai: FakeOpenAI) -> None:
@@ -253,6 +293,56 @@ def test_no_promise_note_applies_when_no_weather_context(
     _say(weather_ready, "今天中午吃什么", message_id=947)
 
     joined = _system_and_user(fake_openai.requests()[-1])
-    assert "没有联网查询能力" in joined, joined[-300:]
+    assert "手头没有实时数据" in joined, joined[-300:]
     assert len(fake_openai.requests()) == 1
+
+
+def test_no_promise_note_does_not_claim_incapability() -> None:
+    """约束只能说"别空口承诺"，不能说"你没有联网能力"。
+
+    真实事故：上一轮真查到了伦敦的天气，下一轮模型读到"你没有联网查询能力"，
+    立刻把**正确的数据**也否了 ——「其实本鲸刚才在瞎编，我没有查天气的能力」。
+    这种假道歉比不回答更伤，所以措辞必须守住。
+    """
+    from qlark.chat.pipeline import MessagePipeline
+
+    note = MessagePipeline.WEATHER_NO_PROMISE_NOTE
+    for forbidden in ("没有联网", "没有查天气", "不具备", "无法联网"):
+        assert forbidden not in note, f"禁止再出现「{forbidden}」式自贬：{note}"
+    assert "不知道" in note
+
+
+def test_correction_about_city_is_queried(weather_ready, fake_openai: FakeOpenAI) -> None:
+    """用户更正城市（"我不在伦敦，我在杭州"）时要真的去查杭州。
+
+    这句既没有天气词、也不是纯地名，以前被长度/标点规则挡在外面，
+    模型只能顺着上一轮硬聊，甚至反过来否认自己查过。
+    """
+    fake_openai.reset()
+    fake_openai.replies('{"city": "伦敦"}', '{"messages": ["伦敦 7℃ 多云"]}', repeat_last=True)
+    _say(weather_ready, "伦敦现在天气如何", message_id=950)
+
+    fake_openai.reset()
+    fake_openai.replies('{"city": "杭州"}', '{"messages": ["杭州 22℃ 晴"]}', repeat_last=True)
+    _say(weather_ready, "我不在伦敦，我在杭州", message_id=951)
+
+    payloads = fake_openai.requests()
+    intent_text = _system_and_user(payloads[0])
+    assert "上文刚问过：伦敦" in intent_text, intent_text[-200:]
+    joined = _system_and_user(payloads[-1])
+    assert "【实时天气】" in joined, f"更正句没有触发查询：{joined[-300:]}"
+    assert "杭州现在 18℃" in joined
+
+
+def test_correction_without_weather_context_is_ignored(
+    weather_ready, fake_openai: FakeOpenAI
+) -> None:
+    """没在聊天气时，"我在杭州" 不该触发查询（省一次调用）。"""
+    fake_openai.reset()
+    fake_openai.replies('{"messages": ["杭州挺好"]}', repeat_last=True)
+
+    _say(weather_ready, "我不在伦敦，我在杭州", message_id=952)
+
+    assert len(fake_openai.requests()) == 1
+    assert "【实时天气】" not in _system_and_user(fake_openai.requests()[-1])
 

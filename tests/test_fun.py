@@ -213,6 +213,35 @@ def test_custom_keywords_are_respected() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# 从句子里猜城市（猜对就省掉一次模型调用，猜错也没关系 —— 还要 GeoAPI 验证）
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("成都热死了", ["成都"]),
+        ("成都天气怎么样", ["成都"]),
+        ("北京下雨吗", ["北京"]),
+        ("北京现在天气如何", ["北京"]),
+        ("今天成都天气怎么样", ["成都"]),
+        ("成都今天热死了", ["成都"]),
+        ("明天北京降温吗", ["北京"]),
+        ("石家庄下雪了", ["石家庄", "家庄"]),
+    ],
+)
+def test_city_candidates_pick_the_place(text: str, expected: list[str]) -> None:
+    from qlark.fun.weather import city_candidates
+
+    assert city_candidates(text) == expected
+
+
+@pytest.mark.parametrize("text", ["今天热死了", "热死了", "那明天呢", "哈哈哈哈", "菏泽"])
+def test_city_candidates_do_not_guess_without_a_trigger(text: str) -> None:
+    from qlark.fun.weather import city_candidates
+
+    assert city_candidates(text) == []
+
+
+# --------------------------------------------------------------------------- #
 # 渲染
 # --------------------------------------------------------------------------- #
 NOW = {

@@ -57,6 +57,63 @@ def looks_like_weather_question(text: str, keywords: list[str] | None = None) ->
     return any(word and word in content for word in words)
 
 
+#: 出现在地名位置但**不是**地名的词（"今天热死了"不能被猜成"今天"）
+#: 注意别把「家」放进来：石家庄/张家口/张家界都在用
+_NOT_CITY_CHARS = set("今天明昨后现早中晚上午下周这那哪我你他她它边么什怎")
+
+#: 「北京**现在**天气如何」里的时间词，取城市名之前先剥掉
+_TIME_SUFFIXES = (
+    "这会儿", "这阵子", "现在", "目前", "最近", "今天", "明天", "昨天", "后天",
+    "这周", "下周", "周末", "白天", "晚上", "早上", "早晨", "中午", "下午",
+    "这边", "那边", "这里", "那里", "当地",
+)
+
+
+def _strip_time_suffix(prefix: str) -> str:
+    text = prefix
+    changed = True
+    while changed:
+        changed = False
+        for word in _TIME_SUFFIXES:
+            if text.endswith(word) and len(text) > len(word):
+                text = text[: -len(word)]
+                changed = True
+                break
+    return text
+
+
+def city_candidates(text: str, keywords: list[str] | None = None) -> list[str]:
+    """从"成都热死了""北京现在天气如何"这类句子里**猜**城市名。
+
+    只是候选，必须再拿去 GeoAPI 查一次才算数 —— 猜错的代价是一次失败的请求，
+    而猜对了就省掉一次模型调用（约 1s 延迟 + 110 token），也避开了
+    "意图调用超时 → 整轮没有天气" 这种坑（实测踩过："成都热死了" 超时 8s，
+    明明城市就写在句子里）。
+
+    取法：天气词前面那截，先剥掉"现在/今天/明天"这类时间词，
+    再取紧邻的 2~3 个汉字（不能含时间/代词类字符）。
+    """
+    content = str(text or "")
+    words = [str(word).strip() for word in (keywords or DEFAULT_KEYWORDS) if str(word).strip()]
+    found: list[str] = []
+    for word in words:
+        start = content.find(word)
+        while start > 0:
+            prefix = _strip_time_suffix(content[:start])
+            for size in (3, 2):
+                if len(prefix) < size:
+                    continue
+                head = prefix[-size:]
+                if any(ch in _NOT_CITY_CHARS for ch in head):
+                    continue
+                if any(item in head for item in words):
+                    continue
+                if head not in found:
+                    found.append(head)
+            start = content.find(word, start + 1)
+    return found[:3]
+
+
 class WeatherCache:
     """按城市缓存渲染好的那一句话。
 
